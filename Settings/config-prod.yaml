@@ -1,0 +1,32 @@
+name: private-browser-server
+mode: prod
+version: 0.1.0
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  read_timeout_seconds: 15
+  write_timeout_seconds: 15
+
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  database: private_browser_server
+  username: private_browser
+  password: ""
+  max_open_conns: 50
+  max_idle_conns: 10
+
+jwt:
+  secret: change-me-before-prod
+  expire_hours: 24
+  issuer: private-browser-server
+  allow_weak_secret: false
+
+edge:
+  request_timeout_seconds: 20
+  retry_times: 0
+
+task:
+  refresh_interval_seconds: 5
+  stale_seconds: 60

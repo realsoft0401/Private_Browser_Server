@@ -1,0 +1,12 @@
+openapi: 3.0.3
+info:
+  title: Private_Browser_Server API
+  version: 0.1.0
+  description: Server V1.0 center orchestration API skeleton.
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: OK

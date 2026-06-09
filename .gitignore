@@ -1,0 +1,18 @@
+# Go build/cache outputs
+.gocache/
+bin/
+dist/
+*.test
+
+# Local temporary files
+.tmp/
+tmp/
+*.tmp
+
+# Runtime logs and local environment overrides
+*.log
+.env
+.env.*
+
+# macOS metadata
+.DS_Store
