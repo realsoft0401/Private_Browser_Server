@@ -4,9 +4,11 @@ package Env
 //
 // 它只保存状态摘要和连接入口，不保存 profile、proxy 明文、fingerprint raw 或 browser-data。
 type ServerBrowserEnv struct {
-	EnvID           string `json:"envId"`
-	UserID          string `json:"userId"`
-	NodeID          string `json:"nodeId"`
+	EnvID  string `json:"envId"`
+	UserID string `json:"userId"`
+	// ClientID 是 Node Server 分配给目标 Client 的中心身份。
+	// 数据库列统一使用 client_id，避免把 Node Server 和 Edge Client 的身份混成一类。
+	ClientID        string `json:"clientId"`
 	RPAType         string `json:"rpaType"`
 	Name            string `json:"name"`
 	Status          string `json:"status"`

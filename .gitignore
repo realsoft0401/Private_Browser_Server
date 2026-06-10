@@ -13,6 +13,9 @@ tmp/
 *.log
 .env
 .env.*
+data/*.db
+data/*.db-shm
+data/*.db-wal
 
 # macOS metadata
 .DS_Store

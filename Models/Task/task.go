@@ -2,12 +2,14 @@ package Task
 
 // ServerTask 保存中心任务与 Edge 任务的绑定关系。
 //
-// Server 通过它把前端可见 taskId、目标节点、目标环境包和 Edge taskId 串起来；
+// Server 通过它把前端可见 taskId、目标 Edge Client、目标环境包和 Edge taskId 串起来；
 // 具体 Docker/容器动作仍然由 Edge 执行。
 type ServerTask struct {
-	ID           string `json:"id"`
-	UserID       string `json:"userId"`
-	NodeID       string `json:"nodeId"`
+	ID     string `json:"id"`
+	UserID string `json:"userId"`
+	// ClientID 是任务目标 Client 的中心身份。
+	// 底层字段名和 JSON 都统一为 clientId，避免维护时把 Node Server 与 Edge Client 混淆。
+	ClientID     string `json:"clientId"`
 	EnvID        string `json:"envId"`
 	Type         string `json:"type"`
 	Status       string `json:"status"`

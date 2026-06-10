@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"private_browser_server/Middleware/PlatformContext"
 	"private_browser_server/Rom"
 	AuthService "private_browser_server/Service/Auth"
 	DashboardService "private_browser_server/Service/Dashboard"
@@ -34,10 +35,10 @@ func Setup() *gin.Engine {
 			"mode":       Settings.Conf.Mode,
 			"version":    Settings.Conf.Version,
 			"configFile": Settings.Conf.ConfigFile,
-			"mysql": gin.H{
-				"host":     Settings.Conf.MySQLConfig.Host,
-				"port":     Settings.Conf.MySQLConfig.Port,
-				"database": Settings.Conf.MySQLConfig.Database,
+			"sqlite": gin.H{
+				"path":         Settings.Conf.SQLiteConfig.Path,
+				"maxOpenConns": Settings.Conf.SQLiteConfig.MaxOpenConns,
+				"maxIdleConns": Settings.Conf.SQLiteConfig.MaxIdleConns,
 			},
 			"romInitialized": Rom.IsInitialized(),
 		})
@@ -50,23 +51,27 @@ func Setup() *gin.Engine {
 	auth.POST("/login", AuthService.LoginUser)
 	auth.GET("/me", AuthService.CurrentUser)
 
-	nodes := apiV1.Group("/nodes")
-	nodes.POST("/probe-docker", NodeService.ProbeDocker)
-	nodes.POST("", NodeService.RegisterNode)
-	nodes.GET("", NodeService.ListNodes)
-	nodes.GET("/:id", NodeService.GetNodeDetail)
-	nodes.POST("/:id/device-info/refresh", NodeService.RefreshNodeDeviceInfo)
+	business := apiV1.Group("")
+	business.Use(PlatformContext.Middleware())
 
-	envs := apiV1.Group("/envs")
+	edgeClients := business.Group("/edge-clients")
+	edgeClients.POST("/probe-docker", NodeService.ProbeDocker)
+	edgeClients.POST("", NodeService.RegisterNode)
+	edgeClients.GET("", NodeService.ListNodes)
+	edgeClients.GET("/discovered", NodeService.ListDiscoveredClients)
+	edgeClients.GET("/:clientId", NodeService.GetNodeDetail)
+	edgeClients.POST("/:clientId/device-info/refresh", NodeService.RefreshNodeDeviceInfo)
+
+	envs := business.Group("/envs")
 	envs.POST("", EnvService.CreateEnv)
 	envs.GET("", EnvService.ListEnvs)
 	envs.GET("/:envId", EnvService.GetEnvDetail)
 	envs.POST("/:envId/run", EnvService.RunEnv)
 	envs.POST("/:envId/stop", EnvService.StopEnv)
 
-	server := apiV1.Group("/server")
+	server := business.Group("/server")
 	server.GET("/dashboard", DashboardService.GetDashboard)
-	server.POST("/nodes/heartbeat", NodeService.ReceiveHeartbeat)
+	server.POST("/edge-clients/heartbeat", NodeService.ReceiveHeartbeat)
 	server.GET("/tasks", TaskService.ListTasks)
 	server.GET("/tasks/:taskId", TaskService.GetTask)
 	server.GET("/tasks/:taskId/events", TaskService.StreamTaskEvents)
@@ -78,6 +83,9 @@ func Setup() *gin.Engine {
 //
 // 这里先保留 /openapi.yaml，后续接口实现时以 docs/openapi.yaml 作为 Apifox/Swagger 的事实来源。
 func registerDocs(r *gin.Engine) {
+	r.GET("/swagger", func(c *gin.Context) {
+		c.File(filepath.Join(Settings.Conf.ProjectRoot, "public", "swagger.html"))
+	})
 	r.GET("/openapi.yaml", func(c *gin.Context) {
 		c.File(filepath.Join(Settings.Conf.ProjectRoot, "docs", "openapi.yaml"))
 	})

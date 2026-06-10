@@ -2,11 +2,209 @@ openapi: 3.0.3
 info:
   title: Private_Browser_Server API
   version: 0.1.0
-  description: Server V1.0 center orchestration API skeleton.
+  description: >
+    Node Server V1 demo API. Node Server 使用本地 SQLite 保存控制面索引，
+    通过 Platform Header 记录主账号和操作者上下文，再管理 x86 Client Edge。
+servers:
+  - url: http://127.0.0.1:3400
+    description: Local Node Server
+tags:
+  - name: System
+  - name: Edge Clients
 paths:
   /health:
     get:
-      summary: Health check
+      tags: [System]
+      summary: 健康检查
       responses:
         "200":
           description: OK
+
+  /api/v1/edge-clients/probe-docker:
+    post:
+      tags: [Edge Clients]
+      summary: 探测 Docker 2375 能力，不写数据库
+      parameters:
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProbeDockerRequest"
+      responses:
+        "200":
+          description: Unified response
+
+  /api/v1/edge-clients:
+    post:
+      tags: [Edge Clients]
+      summary: 手动注册 Client 节点
+      description: 注册 Edge Client，只保存接入信息和平台归属；设备能力需要再调用 device-info/refresh。
+      parameters:
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterNodeRequest"
+      responses:
+        "200":
+          description: Unified response
+    get:
+      tags: [Edge Clients]
+      summary: Edge Client 列表
+      parameters:
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+      responses:
+        "200":
+          description: Unified response
+
+  /api/v1/edge-clients/discovered:
+    get:
+      tags: [Edge Clients]
+      summary: UDP discovery 已发现 Client 列表
+      description: 只返回 UDP beacon 缓存，不自动创建节点，不代表 verified。
+      parameters:
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+      responses:
+        "200":
+          description: Unified response
+
+  /api/v1/edge-clients/{clientId}:
+    get:
+      tags: [Edge Clients]
+      summary: Edge Client 详情
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "9060900010001"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+      responses:
+        "200":
+          description: Unified response
+
+  /api/v1/edge-clients/{clientId}/device-info/refresh:
+    post:
+      tags: [Edge Clients]
+      summary: 探测并保存 Client Docker 设备能力
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "9060900010001"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+      responses:
+        "200":
+          description: Unified response
+
+components:
+  parameters:
+    MainAccountId:
+      name: X-Main-Account-Id
+      in: header
+      required: true
+      schema:
+        type: string
+      example: "906090001"
+      description: PlatformServer 主账号 ID，Node Server 用于节点、环境包和任务归属。
+    PlatformUserId:
+      name: X-Platform-User-Id
+      in: header
+      required: true
+      schema:
+        type: string
+      example: "user_1780995561009325000_000001"
+      description: PlatformServer 当前操作者 ID。
+    PlatformUsername:
+      name: X-Platform-Username
+      in: header
+      required: false
+      schema:
+        type: string
+      example: "user_906090001"
+      description: 当前操作者名称，用于审计摘要。
+    PlatformRole:
+      name: X-Platform-Role
+      in: header
+      required: false
+      schema:
+        type: string
+      example: "owner"
+      description: 当前操作者角色，V1 demo 只记录，不做权限判定。
+  schemas:
+    ProbeDockerRequest:
+      type: object
+      required: [dockerApiUrl]
+      properties:
+        dockerApiUrl:
+          type: string
+          example: "http://192.168.10.119:2375"
+    RegisterNodeRequest:
+      type: object
+      required: [name, baseUrl]
+      properties:
+        name:
+          type: string
+          example: "x86-client-119"
+        baseUrl:
+          type: string
+          example: "http://192.168.10.119:3300"
+        clientIp:
+          type: string
+          example: "192.168.10.119"
+        dockerApiUrl:
+          type: string
+          example: "http://192.168.10.119:2375"
+    ControlNode:
+      type: object
+      description: >
+        Node Server 保存的 Client 中心索引。对外统一使用 clientId；
+        SQLite 内部使用 edge_clients.id 保存，Client Edge 本身不生成该 ID。
+      properties:
+        clientId:
+          type: string
+          example: "9060900010001"
+        mainAccountId:
+          type: string
+          example: "906090001"
+        clientSequence:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "x86-client-119"
+        baseUrl:
+          type: string
+          example: "http://192.168.10.119:3300"
+        clientIp:
+          type: string
+          example: "192.168.10.119"
+        dockerApiUrl:
+          type: string
+          example: "http://192.168.10.119:2375"
+        arch:
+          type: string
+          example: "amd64"
+        healthStatus:
+          type: string
+          example: "healthy"
+        discoveryStatus:
+          type: string
+          example: "manual"

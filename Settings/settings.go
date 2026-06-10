@@ -31,16 +31,17 @@ type AppConfig struct {
 	ConfigFile  string `mapstructure:"-"`
 	Env         string `mapstructure:"-"`
 
-	*ServerConfig `mapstructure:"server"`
-	*MySQLConfig  `mapstructure:"mysql"`
-	*JWTConfig    `mapstructure:"jwt"`
-	*EdgeConfig   `mapstructure:"edge"`
-	*TaskConfig   `mapstructure:"task"`
+	*ServerConfig    `mapstructure:"server"`
+	*SQLiteConfig    `mapstructure:"sqlite"`
+	*JWTConfig       `mapstructure:"jwt"`
+	*EdgeConfig      `mapstructure:"edge"`
+	*TaskConfig      `mapstructure:"task"`
+	*DiscoveryConfig `mapstructure:"discovery"`
 }
 
 // ServerConfig 描述中心服务自身的监听参数。
 //
-// 它只表示 Private_Browser_Server 的 HTTP 入口，不表示 Edge 节点地址。
+// 它只表示 Private_Browser_Server 的 HTTP 入口，不表示 Edge Client 地址。
 type ServerConfig struct {
 	Host                string `mapstructure:"host"`
 	Port                int    `mapstructure:"port"`
@@ -48,16 +49,13 @@ type ServerConfig struct {
 	WriteTimeoutSeconds int    `mapstructure:"write_timeout_seconds"`
 }
 
-// MySQLConfig 描述中心数据库连接参数。
+// SQLiteConfig 描述 Node Server 的本地中心数据库。
 //
-// V1 的用户、节点、环境聚合和任务状态都应落 MySQL；这里先定义配置契约，
-// 下一步接入 GORM/MySQL 时不得让各业务层直接拼 DSN。
-type MySQLConfig struct {
-	Host         string `mapstructure:"host"`
-	Port         int    `mapstructure:"port"`
-	Database     string `mapstructure:"database"`
-	Username     string `mapstructure:"username"`
-	Password     string `mapstructure:"password"`
+// 这是用户确认后的 Node Server 口径：平台管理端使用 MySQL，
+// Node Server 只保存本节点控制面需要的节点、环境聚合和任务摘要，因此用 SQLite 降低部署成本。
+// 后续 Repository 只能通过 Rom.DB() 使用连接，不能在业务层重新打开数据库。
+type SQLiteConfig struct {
+	Path         string `mapstructure:"path"`
 	MaxOpenConns int    `mapstructure:"max_open_conns"`
 	MaxIdleConns int    `mapstructure:"max_idle_conns"`
 }
@@ -72,9 +70,9 @@ type JWTConfig struct {
 	AllowWeakSecret bool   `mapstructure:"allow_weak_secret"`
 }
 
-// EdgeConfig 描述 Server 调用 Edge 节点的通用 HTTP 策略。
+// EdgeConfig 描述 Server 调用 Edge Client 的通用 HTTP 策略。
 //
-// 单个节点的 baseUrl/apiKey 由 control_nodes 保存；这里不保存节点列表。
+// 单个 Edge Client 的 baseUrl/apiKey 由 edge_clients 保存；这里不保存 Client 列表。
 type EdgeConfig struct {
 	RequestTimeoutSeconds int `mapstructure:"request_timeout_seconds"`
 	// RetryTimes 是早期配置遗留字段，当前已废弃且 EdgeClient 不读取。
@@ -89,6 +87,20 @@ type EdgeConfig struct {
 type TaskConfig struct {
 	RefreshIntervalSeconds int `mapstructure:"refresh_interval_seconds"`
 	StaleSeconds           int `mapstructure:"stale_seconds"`
+}
+
+// DiscoveryConfig 描述 Node Server 监听 Client UDP beacon 的策略。
+//
+// 设计来源：Client 会在独立内网广播本机 Edge 服务入口；Server 监听后只能把它当“发现线索”，
+// 仍必须再做 /health、/api/v1/edge/device-info、Docker 2375 和架构归一化，不能直接进入 verified。
+type DiscoveryConfig struct {
+	Enabled         bool   `mapstructure:"enabled"`
+	ListenAddress   string `mapstructure:"listen_address"`
+	Port            int    `mapstructure:"port"`
+	Magic           string `mapstructure:"magic"`
+	ProtocolVersion int    `mapstructure:"protocol_version"`
+	Group           string `mapstructure:"group"`
+	MaxPacketBytes  int    `mapstructure:"max_packet_bytes"`
 }
 
 // Init 加载当前环境配置文件。
@@ -129,16 +141,12 @@ func setDefaults(env string) {
 	configEngine.SetDefault("mode", env)
 	configEngine.SetDefault("version", "0.1.0")
 	configEngine.SetDefault("server.host", "0.0.0.0")
-	configEngine.SetDefault("server.port", 8080)
+	configEngine.SetDefault("server.port", 3400)
 	configEngine.SetDefault("server.read_timeout_seconds", 15)
 	configEngine.SetDefault("server.write_timeout_seconds", 15)
-	configEngine.SetDefault("mysql.host", "127.0.0.1")
-	configEngine.SetDefault("mysql.port", 3306)
-	configEngine.SetDefault("mysql.database", "private_browser_server")
-	configEngine.SetDefault("mysql.username", "root")
-	configEngine.SetDefault("mysql.password", "")
-	configEngine.SetDefault("mysql.max_open_conns", 20)
-	configEngine.SetDefault("mysql.max_idle_conns", 5)
+	configEngine.SetDefault("sqlite.path", "data/private_browser_server.db")
+	configEngine.SetDefault("sqlite.max_open_conns", 1)
+	configEngine.SetDefault("sqlite.max_idle_conns", 1)
 	configEngine.SetDefault("jwt.secret", "dev-only-change-me")
 	configEngine.SetDefault("jwt.expire_hours", 24)
 	configEngine.SetDefault("jwt.issuer", "private-browser-server")
@@ -147,6 +155,13 @@ func setDefaults(env string) {
 	configEngine.SetDefault("edge.retry_times", 0)
 	configEngine.SetDefault("task.refresh_interval_seconds", 5)
 	configEngine.SetDefault("task.stale_seconds", 60)
+	configEngine.SetDefault("discovery.enabled", true)
+	configEngine.SetDefault("discovery.listen_address", "0.0.0.0")
+	configEngine.SetDefault("discovery.port", 43000)
+	configEngine.SetDefault("discovery.magic", "PRIVATE_BROWSER_CLIENT_DISCOVERY")
+	configEngine.SetDefault("discovery.protocol_version", 1)
+	configEngine.SetDefault("discovery.group", "default")
+	configEngine.SetDefault("discovery.max_packet_bytes", 8192)
 }
 
 // normalizeConfig 补齐指针配置并收敛不合理值。
@@ -157,8 +172,8 @@ func normalizeConfig(projectRoot, configFile, env string, config *AppConfig) {
 	if config.ServerConfig == nil {
 		config.ServerConfig = &ServerConfig{}
 	}
-	if config.MySQLConfig == nil {
-		config.MySQLConfig = &MySQLConfig{}
+	if config.SQLiteConfig == nil {
+		config.SQLiteConfig = &SQLiteConfig{}
 	}
 	if config.JWTConfig == nil {
 		config.JWTConfig = &JWTConfig{}
@@ -169,8 +184,20 @@ func normalizeConfig(projectRoot, configFile, env string, config *AppConfig) {
 	if config.TaskConfig == nil {
 		config.TaskConfig = &TaskConfig{}
 	}
-	if config.MySQLConfig.Port <= 0 {
-		config.MySQLConfig.Port = 3306
+	if config.DiscoveryConfig == nil {
+		config.DiscoveryConfig = &DiscoveryConfig{}
+	}
+	if strings.TrimSpace(config.SQLiteConfig.Path) == "" {
+		config.SQLiteConfig.Path = "data/private_browser_server.db"
+	}
+	if !filepath.IsAbs(config.SQLiteConfig.Path) {
+		config.SQLiteConfig.Path = filepath.Join(projectRoot, config.SQLiteConfig.Path)
+	}
+	if config.SQLiteConfig.MaxOpenConns <= 0 {
+		config.SQLiteConfig.MaxOpenConns = 1
+	}
+	if config.SQLiteConfig.MaxIdleConns < 0 {
+		config.SQLiteConfig.MaxIdleConns = 0
 	}
 	if config.EdgeConfig.RequestTimeoutSeconds <= 0 {
 		config.EdgeConfig.RequestTimeoutSeconds = 20
@@ -183,6 +210,31 @@ func normalizeConfig(projectRoot, configFile, env string, config *AppConfig) {
 	}
 	if config.TaskConfig.StaleSeconds < config.TaskConfig.RefreshIntervalSeconds*2 {
 		config.TaskConfig.StaleSeconds = config.TaskConfig.RefreshIntervalSeconds * 2
+	}
+	normalizeDiscoveryConfig(config.DiscoveryConfig)
+}
+
+func normalizeDiscoveryConfig(config *DiscoveryConfig) {
+	if config == nil {
+		return
+	}
+	if strings.TrimSpace(config.ListenAddress) == "" {
+		config.ListenAddress = "0.0.0.0"
+	}
+	if config.Port <= 0 {
+		config.Port = 43000
+	}
+	if strings.TrimSpace(config.Magic) == "" {
+		config.Magic = "PRIVATE_BROWSER_CLIENT_DISCOVERY"
+	}
+	if config.ProtocolVersion <= 0 {
+		config.ProtocolVersion = 1
+	}
+	if strings.TrimSpace(config.Group) == "" {
+		config.Group = "default"
+	}
+	if config.MaxPacketBytes <= 0 || config.MaxPacketBytes > 65535 {
+		config.MaxPacketBytes = 8192
 	}
 }
 

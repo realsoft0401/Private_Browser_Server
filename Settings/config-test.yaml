@@ -4,18 +4,14 @@ version: 0.1.0
 
 server:
   host: 127.0.0.1
-  port: 18080
+  port: 3400
   read_timeout_seconds: 10
   write_timeout_seconds: 10
 
-mysql:
-  host: 127.0.0.1
-  port: 3306
-  database: private_browser_server_test
-  username: root
-  password: ""
-  max_open_conns: 5
-  max_idle_conns: 2
+sqlite:
+  path: data/private_browser_server_test.db
+  max_open_conns: 1
+  max_idle_conns: 1
 
 jwt:
   secret: test-only-change-me
@@ -30,3 +26,12 @@ edge:
 task:
   refresh_interval_seconds: 3
   stale_seconds: 30
+
+discovery:
+  enabled: true
+  listen_address: 0.0.0.0
+  port: 43000
+  magic: PRIVATE_BROWSER_CLIENT_DISCOVERY
+  protocol_version: 1
+  group: default
+  max_packet_bytes: 8192

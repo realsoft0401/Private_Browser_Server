@@ -12,6 +12,7 @@ import (
 
 	"private_browser_server/Rom"
 	"private_browser_server/Routes"
+	DiscoveryService "private_browser_server/Service/Discovery"
 	"private_browser_server/Settings"
 )
 
@@ -27,12 +28,14 @@ type serverOptions struct {
 // 设计边界：
 // - 这里负责配置、数据库占位初始化、路由和优雅退出；
 // - 不在这里写用户认证、节点调度、Edge 调用等业务规则；
-// - Server V1 进入真实 MySQL/GORM 后，应优先扩展 Rom.Init，而不是让各 Service 自己连库。
+// - Server V1 使用 SQLite 作为本地控制面数据库，后续迁移也应优先扩展 Rom.Init，而不是让各 Service 自己连库。
 func Init(projectRoot string) error {
 	if err := initDependencies(projectRoot); err != nil {
 		return err
 	}
+	DiscoveryService.StartListener()
 	defer Rom.Close()
+	defer DiscoveryService.StopListener()
 
 	options := buildServerOptions()
 	server := newHTTPServer(options)
@@ -43,8 +46,8 @@ func Init(projectRoot string) error {
 
 // initDependencies 初始化 Server 运行依赖。
 //
-// 当前阶段先保留 MySQL 初始化占位，是为了把架构边界建好；下一步接入 GORM/MySQL 时，
-// 只需要替换 Rom.Init 内部实现，不需要改 Routes 或业务层。
+// 当前阶段在 Rom.Init 内完成 SQLite 打开和基础迁移。
+// Node Server 后续新增表或切换连接策略时，应继续保持“基础设施统一初始化、业务层只调用 Repository”的边界。
 func initDependencies(projectRoot string) error {
 	if err := Settings.Init(projectRoot); err != nil {
 		return fmt.Errorf("init settings failed: %w", err)
@@ -57,7 +60,7 @@ func initDependencies(projectRoot string) error {
 
 // buildServerOptions 将配置里的监听参数归一化。
 //
-// Server 默认监听 8080，避免和 Client 默认 3300 冲突。
+// Node Server 默认监听 3400，端口规划为 Client=3300、Node Server=3400、PlatformServer=3500。
 func buildServerOptions() serverOptions {
 	options := serverOptions{
 		host:         Settings.Conf.ServerConfig.Host,
@@ -69,7 +72,7 @@ func buildServerOptions() serverOptions {
 		options.host = "0.0.0.0"
 	}
 	if options.port <= 0 {
-		options.port = 8080
+		options.port = 3400
 	}
 	if options.readTimeout <= 0 {
 		options.readTimeout = 15 * time.Second

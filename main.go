@@ -13,7 +13,7 @@ import (
 // 设计来源：
 // - Server 是中心调度层，和 Private_Browser_Client 的边缘服务入口保持同样的“薄 main”结构；
 // - main 只负责定位项目根目录和启动基础设施，不承载 Auth、Node、Env 等业务逻辑；
-// - 后续新增 MySQL、任务队列、审计日志时，应继续挂到 Infrastructures.Init，不要让入口文件膨胀。
+// - 后续新增任务队列、审计日志或 SQLite 迁移时，应继续挂到 Infrastructures.Init，不要让入口文件膨胀。
 func main() {
 	projectRoot, err := detectProjectRoot()
 	if err != nil {
