@@ -1,16 +1,38 @@
 openapi: 3.0.3
 info:
-  title: Private_Browser_Server API
+  title: Private Browser Server Control API
   version: 0.1.0
-  description: >
-    Node Server V1 demo API. Node Server 使用本地 SQLite 保存控制面索引，
-    通过 Platform Header 记录主账号和操作者上下文，再管理 x86 Client Edge。
+  description: |
+    Private_Browser_Server 是中心控制面，负责 Edge Client 自动发现、节点准入验证、
+    中心环境包聚合、生命周期任务编排和审计摘要。
+
+    Server 只保存中心索引和任务事实，不直接读取 Edge SQLite、环境包目录或登录态资产。
+    浏览器容器、profile、proxy、fingerprint、runtime.image 执行和本机 Docker 事实，仍由
+    目标节点上的 Private_Browser_Client 负责。
+
+    当前文档描述的是 Server 对管理端或上层平台开放的中心 API；涉及节点 run/stop/create 等动作时，
+    Server 会先校验目标节点 healthy + verified，再受控代理到对应 Edge API。
+
+    除 `/health` 和 `text/event-stream` SSE 外，当前业务接口统一返回 HTTP 200，
+    调用方必须再结合 JSON `code` / `message` / `data` 判断业务是否成功。
 servers:
-  - url: http://127.0.0.1:3400
-    description: Local Node Server
+  - url: /
+    description: 当前打开 Swagger 页面的 Node Server 服务入口；Try it out 会跟随当前页面 Host。
 tags:
   - name: System
+    description: 健康检查和文档入口。
+  - name: Auth
+    description: 中心服务端用户体系入口；当前路由已挂载，但尚未开放真实注册、登录和 JWT。
   - name: Edge Clients
+    description: Edge 节点自动发现、手动登记、设备能力刷新和 verified 准入校验。
+  - name: Edge Heartbeat
+    description: Edge Client 主动上报到 Node Server 的正式心跳入口，不依赖 Platform Header。
+  - name: Browser Envs
+    description: 中心环境包聚合视图与生命周期代理入口；真实环境资产仍在目标 Edge 节点本机。
+  - name: Dashboard
+    description: 平台聚合统计入口；当前只保留文档和占位响应。
+  - name: Server Tasks
+    description: Server 持久任务事实、SSE 进度和最终 success/failed 结论。
 paths:
   /health:
     get:
@@ -18,12 +40,124 @@ paths:
       summary: 健康检查
       responses:
         "200":
-          description: OK
+          description: Node Server 本机健康摘要；这是少数不走 code/message/data 包装的接口。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerHealthResponse"
+              example:
+                ok: true
+                service: private-browser-server
+                mode: production
+                version: 0.1.0
+                configFile: /app/Settings/config-docker.yaml
+                sqlite:
+                  path: /app/data/private_browser_server.sqlite
+                  maxOpenConns: 1
+                  maxIdleConns: 1
+                romInitialized: true
+
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: 注册中心用户（规划中）
+      description: >
+        当前路由已挂载，但真实用户表、密码哈希和 JWT 尚未接入。
+        后续实现时必须只保存密码哈希，不允许把认证逻辑下沉到 Edge Client。
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。当前固定返回 `code=1099`，表示接口已规划但尚未开放。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotImplementedResponse"
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: 登录中心用户（规划中）
+      description: >
+        当前路由已挂载，但真实密码校验和 JWT 签发尚未接入。
+        JWT 只能由 Node Server 或更上层平台签发，不能下沉到 Edge Client。
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。当前固定返回 `code=1099`。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotImplementedResponse"
+
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: 查询当前登录用户（规划中）
+      description: >
+        当前路由已挂载，但 JWT 解析和 RBAC 尚未接入。
+        后续开放时，这里只返回中心用户摘要，不暴露密码哈希等敏感字段。
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。当前固定返回 `code=1099`。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotImplementedResponse"
+
+  /api/v1/server/edge-clients/heartbeat:
+    post:
+      tags: [Edge Heartbeat]
+      summary: Edge Client 正式心跳上报
+      description: >
+        这是 Edge Client 主动打给 Node Server 的正式心跳入口，不依赖 Platform Header。
+        它只接受 discovery 域识别字段和非敏感接入摘要，并把“Node Server 实际收到时间”
+        写入 `lastHeartbeatAt`；`lastHeartbeatReportedAt` 只保留 Client 自报时间用于排障。
+        该接口不会自动把节点提升为 verified，也不会覆盖 healthStatus/discoveryStatus。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HeartbeatRequest"
+            example:
+              discoveryMagic: PRIVATE_BROWSER_CLIENT_DISCOVERY
+              protocolVersion: 1
+              service: private-browser-client
+              discoveryGroup: default
+              baseUrl: http://192.168.10.119:3300
+              clientIp: 192.168.10.119
+              lastHeartbeatAt: 1781061878
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。`code=1000` 表示心跳已匹配到已注册节点并成功落库。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeartbeatUnifiedResponse"
+
+  /api/v1/server/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: 查询平台聚合统计（规划中）
+      description: >
+        当前只保留入口。后续实现时统计应来自 Node Server SQLite 聚合缓存、
+        节点心跳摘要和中心任务事实，不依赖服务进程内存态。
+      parameters:
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。当前固定返回 `code=1099`。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotImplementedResponse"
 
   /api/v1/edge-clients/probe-docker:
     post:
       tags: [Edge Clients]
       summary: 探测 Docker 2375 能力，不写数据库
+      description: >
+        只读取目标 Docker Engine `/_ping`、`/info`、`/version`，返回架构、CPU、内存、
+        Docker 版本和镜像/容器统计，不写入 Node Server 数据库。
       parameters:
         - $ref: "#/components/parameters/MainAccountId"
         - $ref: "#/components/parameters/PlatformUserId"
@@ -37,13 +171,19 @@ paths:
               $ref: "#/components/schemas/ProbeDockerRequest"
       responses:
         "200":
-          description: Unified response
+          description: HTTP 200 + 统一响应包装。`data` 是一次性探测结果，不产生 clientId 或持久状态。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeDockerUnifiedResponse"
 
   /api/v1/edge-clients:
     post:
       tags: [Edge Clients]
-      summary: 手动注册 Client 节点
-      description: 注册 Edge Client，只保存接入信息和平台归属；设备能力需要再调用 device-info/refresh。
+      summary: 手动登记 Edge Client 节点
+      description: >
+        只保存节点接入地址、显示名称和平台归属，不会因为登记成功就自动进入业务可用状态。
+        后续仍需单独执行设备能力刷新和 verify，只有 healthy + verified 才允许承接环境包动作。
       parameters:
         - $ref: "#/components/parameters/MainAccountId"
         - $ref: "#/components/parameters/PlatformUserId"
@@ -57,33 +197,52 @@ paths:
               $ref: "#/components/schemas/RegisterNodeRequest"
       responses:
         "200":
-          description: Unified response
+          description: HTTP 200 + 统一响应包装。成功后只代表中心索引已创建，不代表节点已 verified。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EdgeClientUnifiedResponse"
     get:
       tags: [Edge Clients]
       summary: Edge Client 列表
+      description: >
+        返回当前主账号名下的中心节点索引列表。`heartbeatStatus` 是 Node Server 按阈值动态计算的
+        心跳新鲜度；真正的业务放行仍要同时看 `healthStatus=healthy` 和 `discoveryStatus=verified`。
       parameters:
         - $ref: "#/components/parameters/MainAccountId"
         - $ref: "#/components/parameters/PlatformUserId"
       responses:
         "200":
-          description: Unified response
+          description: HTTP 200 + 统一响应包装。`data.items` 只来自 Node Server 中心缓存，不会实时探测 Edge。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EdgeClientListUnifiedResponse"
 
   /api/v1/edge-clients/discovered:
     get:
       tags: [Edge Clients]
-      summary: UDP discovery 已发现 Client 列表
-      description: 只返回 UDP beacon 缓存，不自动创建节点，不代表 verified。
+      summary: 查看 UDP 自动发现缓存
+      description: >
+        返回 UDP beacon 缓存，并按当前主账号已注册的 baseUrl/clientIp 补充 clientId。
+        clientId 为空表示尚未绑定；有值表示该发现项已经登记过。该接口只展示发现结果，
+        不自动创建节点，也不代表 verified。
       parameters:
         - $ref: "#/components/parameters/MainAccountId"
         - $ref: "#/components/parameters/PlatformUserId"
       responses:
         "200":
-          description: Unified response
+          description: HTTP 200 + 统一响应包装。`data.items` 是当前 UDP 发现缓存视图，不会自动创建节点。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveredClientsResponse"
 
   /api/v1/edge-clients/{clientId}:
     get:
       tags: [Edge Clients]
       summary: Edge Client 详情
+      description: 返回单个 Edge Client 的中心索引详情，便于排查 lastError、heartbeat 和 verify 结果。
       parameters:
         - name: clientId
           in: path
@@ -95,12 +254,19 @@ paths:
         - $ref: "#/components/parameters/PlatformUserId"
       responses:
         "200":
-          description: Unified response
+          description: HTTP 200 + 统一响应包装。`data` 是当前中心缓存节点详情。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EdgeClientUnifiedResponse"
 
   /api/v1/edge-clients/{clientId}/device-info/refresh:
     post:
       tags: [Edge Clients]
-      summary: 探测并保存 Client Docker 设备能力
+      summary: 探测并刷新节点设备能力
+      description: >
+        通过目标 Edge 的 /health、/api/v1/edge/device-info 和 Docker 2375 能力探测刷新中心缓存，
+        用于补齐 os、arch、dockerVersion、镜像/容器统计和基础健康摘要。
       parameters:
         - name: clientId
           in: path
@@ -112,7 +278,406 @@ paths:
         - $ref: "#/components/parameters/PlatformUserId"
       responses:
         "200":
-          description: Unified response
+          description: HTTP 200 + 统一响应包装。`data.node` 是刷新后的中心节点摘要，`data.probe` 是本次 Docker 探测事实。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshEdgeClientUnifiedResponse"
+
+  /api/v1/edge-clients/{clientId}/verify:
+    post:
+      tags: [Edge Clients]
+      summary: 执行节点准入校验并标记 verified
+      description: >
+        按固定顺序检查 UDP 心跳、Client /health、Client device-info、Docker 2375 和架构一致性。
+        全部通过后写入 healthStatus=healthy、discoveryStatus=verified；失败时写 lastError，不允许业务放行。
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "9060900010001"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。全部校验通过时 `data.client.discoveryStatus=verified`；失败时仍返回 200，但 `code!=1000`，并在 `data.nextAction` 给出修复方向。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyEdgeClientResponse"
+
+  /api/v1/envs:
+    post:
+      tags: [Browser Envs]
+      summary: 在指定 verified 节点创建中心环境包
+      description: >
+        Node Server 的中心创建入口。调用方只提供 clientId、imagePolicy 和稳定环境参数；
+        Node Server 会先校验目标 Client 已处于 healthy + verified，再按节点 arch 解析真正的 runtime.image，
+        然后代理调用 Edge /api/v1/edge/browser-envs，并把中心摘要写入 server_browser_envs。
+        server_browser_envs 只是中心缓存和调度视图，真实环境目录、profile、browser-data/profile、
+        proxy 和 fingerprint 仍保存在目标 Edge 节点本机。
+        当前 imagePolicy 由 Platform 受控下发；过渡阶段先直接传已登记镜像字符串。
+        在 verified amd64 节点上，当前默认值会解析到
+        crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64。
+      parameters:
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            examples:
+              verified-amd64-with-proxy:
+                summary: verified amd64 完整代理示例
+                description: >
+                  这是发给 Node Server 的真实请求体。当前 imagePolicy 由 Platform 受控给出；
+                  过渡阶段先直接传已登记的 amd64 镜像值。Node Server 会校验该值属于受控策略，
+                  并在 verified amd64 节点上把它解析为
+                  crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64。
+                value:
+                  clientId: "9060900010001"
+                  name: "TikTok 主账号环境"
+                  rpaType: "tiktok"
+                  runtime:
+                    imagePolicy: "crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64"
+                    startupUrl: "https://www.tiktok.com/"
+                    shmSize: "1gb"
+                  environment:
+                    timezone: "Asia/Shanghai"
+                    language: "zh-CN"
+                    screen:
+                      width: 1440
+                      height: 900
+                      depth: 24
+                  proxy:
+                    enabled: true
+                    type: "clash-verge"
+                    mode: "rule"
+                    configBase64: "bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3CmFsbG93LWxhbjogdHJ1ZQpiaW5kLWFkZHJlc3M6IDAuMC4wLjAKbG9nLWxldmVsOiBzaWxlbnQKdW5pZmllZC1kZWxheTogdHJ1ZQpmaW5kLXByb2Nlc3MtbW9kZTogc3RyaWN0CnVkcDogZmFsc2UKCmRuczoKICBlbmFibGU6IHRydWUKICBpcHY2OiBmYWxzZQogIGxpc3RlbjogMC4wLjAuMDo1NDU0CiAgbmFtZXNlcnZlcjoKICAgIC0gdGxzOi8vMS4xLjEuMQogICAgLSB0bHM6Ly84LjguOC44CiAgICAtIGh0dHBzOi8vMS4wLjAuMS9kbnMtcXVlcnkKICBmYWxsYmFjazoKICAgIC0gdGxzOi8vMS4wLjAuMQogIGZhbGxiYWNrLWZpbHRlcjoKICAgIGdlb2lwOiBmYWxzZQogIHByb3h5LXNlcnZlci1uYW1lc2VydmVyOgogICAgLSB0bHM6Ly8xLjEuMS4xCiAgbmFtZXNlcnZlci1wb2xpY3k6IHt9CiAgdXNlLXN5c3RlbS1kbnM6IGZhbHNlCiAgdXNlLWhvc3RzOiBmYWxzZQogIGZha2UtaXAtZmlsdGVyOgogICAgLSArLmxhbgogICAgLSAiKi5sb2NhbCIKICAgIC0gIioubXNmdGNvbm5lY3R0ZXN0LmNvbSIKICAgIC0gIioubXNmdG5jc2kuY29tIgogICAgLSArLmFwcGxlLmNvbQogICAgLSAiKi5iYWlkdS5jb20iCiAgICAtICIqLmpkLmNvbSIKICByZXNwZWN0LXJ1bGVzOiB0cnVlCgpudHA6CiAgZW5hYmxlOiB0cnVlCiAgd3JpdGUtdG8tc3lzdGVtOiBmYWxzZQogIHNlcnZlcjogbnRwMS5hbGl5dW4uY29tCiAgcG9ydDogMTIzCiAgaW50ZXJ2YWw6IDMwCgp0dW46CiAgZW5hYmxlOiB0cnVlCiAgc3RhY2s6IHN5c3RlbQogIGF1dG8tcm91dGU6IHRydWUKICBhdXRvLWRldGVjdC1pbnRlcmZhY2U6IHRydWUKICBtdHU6IDE1MDAKICBkbnMtaGlqYWNrOgogICAgLSAwLjAuMC4wOjUzCiAgICAtIDAuMC4wLjA6ODUzCiAgICAtIDAuMC4wLjA6NDQzCiAgICAtIDAuMC4wLjA6NTM1MwogICAgLSAwLjAuMC4wOjUwNTMKICAgIC0gMC4wLjAuMDo3ODQKICAgIC0gMC4wLjAuMDo4ODUzCiAgICAtIDAuMC4wLjA6NTQKICAgIC0gMC4wLjAuMDoxMDUzCiAgaW5ldDQtcm91dGUtYWRkcmVzczoKICAgIC0gMC4wLjAuMC8xCiAgICAtIDEyOC4wLjAuMC8xCiAgICAtIDE5OC4xOC4wLjAvMTYKICBpbmV0NC1yb3V0ZS1leGNsdWRlLWFkZHJlc3M6CiAgICAtIDAuMC4wLjAvMzIKICAgIC0gMTAuMC4wLjAvOAogICAgLSAxMDAuNjQuMC4wLzEwCiAgICAtIDEyNy4wLjAuMC84CiAgICAtIDE2OS4yNTQuMC4wLzE2CiAgICAtIDE3Mi4xNi4wLjAvMTIKICAgIC0gMTkyLjE2OC4wLjAvMTYKICAgIC0gMjI0LjAuMC4wLzQKICAgIC0gMjQwLjAuMC4wLzQKICAgIC0gMjU1LjI1NS4yNTUuMjU1LzMyCgpzbmlmZmVyOgogIGVuYWJsZTogdHJ1ZQogIGZvcmNlLWRucy1tYXBwaW5nOiB0cnVlCiAgcGFyc2UtcHVyZS1pcDogdHJ1ZQogIG92ZXJyaWRlLWRlc3RpbmF0aW9uOiBmYWxzZQogIHNuaWZmOgogICAgVExTOgogICAgICBwb3J0czoKICAgICAgICAtIDQ0MwogICAgICAgIC0gODQ0MwogICAgSFRUUDoKICAgICAgcG9ydHM6CiAgICAgICAgLSA4MAogICAgICAgIC0gODA4MC04ODgwCiAgICAgIG92ZXJyaWRlLWRlc3RpbmF0aW9uOiB0cnVlCiAgICBRVUlDOgogICAgICBwb3J0czoKICAgICAgICAtIDQ0MwogICAgICAgIC0gODQ0MwogIGZvcmNlLWRvbWFpbjogW10KCnByb3hpZXM6CiAgLSBuYW1lOiB0dXJib05vZGUKICAgIHR5cGU6IHZtZXNzCiAgICBzZXJ2ZXI6IGM1N3MzLnBvcnRhYmxlc3VibWFyaW5lcy5jb20KICAgIHBvcnQ6IDEwNzc3CiAgICBjaXBoZXI6IGF1dG8KICAgIHV1aWQ6IDExYzdiODllLWIyMmUtNDVlZi1hYjVkLTczNTk4YTFlMzQ0NgogICAgYWx0ZXJJZDogMAoKICAtIG5hbWU6IG91dE5vZGUKICAgIHR5cGU6IGh0dHAKICAgIHNlcnZlcjogdXMudWRlYWxwcm94eS5jb20KICAgIHBvcnQ6IDY2NjYKICAgIHVzZXJuYW1lOiB1c2VySWQtMTcxNi1jdXN0b20tNTc5OS1yZWdpb24tc2cKICAgIHBhc3N3b3JkOiBVeG1PYmdhYjBrNHgKICAgIGRpYWxlci1wcm94eTogdHVyYm9Ob2RlCiAgICBza2lwLWNlcnQtdmVyaWZ5OiB0cnVlCgpwcm94eS1ncm91cHM6CiAgLSBuYW1lOiByZWxheQogICAgdHlwZTogc2VsZWN0CiAgICBwcm94aWVzOgogICAgICAtIG91dE5vZGUKICAgICAgLSB0dXJib05vZGUKCnJ1bGVzOgogIC0gSVAtQ0lEUiwyMjMuNS41LjUvMzIsUkVKRUNULG5vLXJlc29sdmUKICAtIElQLUNJRFIsMjIzLjYuNi42LzMyLFJFSkVDVCxuby1yZXNvbHZlCiAgLSBJUC1DSURSLDExNC4xMTQuMTE0LjExNC8zMixSRUpFQ1Qsbm8tcmVzb2x2ZQogIC0gSVAtQ0lEUiwxMTQuMTE0LjExNS4xMTUvMzIsUkVKRUNULG5vLXJlc29sdmUKICAtIElQLUNJRFIsMTE5LjI5LjI5LjI5LzMyLFJFSkVDVCxuby1yZXNvbHZlCiAgLSBJUC1DSURSLDE4MC43Ni43Ni43Ni8zMixSRUpFQ1Qsbm8tcmVzb2x2ZQoKICAtIERTVC1QT1JULDUzLHJlbGF5CiAgLSBEU1QtUE9SVCw4NTMscmVsYXkKICAtIERTVC1QT1JULDUzNTMscmVsYXkKICAtIERTVC1QT1JULDUwNTMscmVsYXkKCiAgLSBET01BSU4tU1VGRklYLGRucy5hbGlkbnMuY29tLFJFSkVDVAogIC0gRE9NQUlOLVNVRkZJWCxwdWJsaWMxLmFsaWRucy5jb20sUkVKRUNUCiAgLSBET01BSU4tU1VGRklYLHB1YmxpYzIuYWxpZG5zLmNvbSxSRUpFQ1QKICAtIERPTUFJTi1TVUZGSVgsZG5zLnB1YixSRUpFQ1QKICAtIERPTUFJTi1TVUZGSVgsZG9oLnB1YixSRUpFQ1QKICAtIERPTUFJTi1TVUZGSVgsYWxpZG5zLmNvbSxSRUpFQ1QKCiAgLSBEU1QtUE9SVCw0NDMscmVsYXksVENQCiAgLSBEU1QtUE9SVCw0NDMsUkVKRUNULFVEUAoKICAtIEdFT0lQLExBTixESVJFQ1QKICAtIElQLUNJRFIsMTkyLjE2OC4wLjAvMTYsRElSRUNUCiAgLSBJUC1DSURSLDEwLjAuMC4wLzgsRElSRUNUCiAgLSBJUC1DSURSLDE3Mi4xNi4wLjAvMTIsRElSRUNUCiAgLSBJUC1DSURSLDEyNy4wLjAuMC84LERJUkVDVAogIC0gSVAtQ0lEUiwxMDAuNjQuMC4wLzEwLERJUkVDVAoKICAtIERPTUFJTixsZjE2LWVmZmVjdGNkbi5ieXRlZWZmZWN0dG9zLWcuY29tLHJlbGF5CiAgLSBET01BSU4sbGYxNi1wa2djZG4ucGl0YXlhLWNsaWVudGFpLmNvbSxyZWxheQogIC0gRE9NQUlOLHAxNi10aWt0b2tjZG4tY29tLmFrYW1haXplZC5uZXQscmVsYXkKICAtIERPTUFJTix0cmFlLWFwaS1zZy5tY2hvc3QuZ3VydSxyZWxheQoKICAtIERPTUFJTi1TVUZGSVgsYnl0ZWRhcG0uY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLGJ5dGVnZWNrby1pMThuLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxieXRlaW50bGFwaS5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsYnl0ZW92ZXJzZWEuY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLGNhcGN1dC5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsaWJ5dGVkdG9zLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxpYnl0ZWltZy5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsaXBzdGF0cC5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsaXNuc3Nkay5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsbWFyc2NvZGUuY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLG11c2Nkbi5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsbXVzaWNhbC5seSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxzZ3BzdGF0cC5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsc25zc2RrLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWstdG9rYXBpLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWt0b2suY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLHRpa3Rva2Nkbi11cy5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsdGlrdG9rY2RuLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWt0b2tkLm5ldCxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWt0b2tkLm9yZyxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWt0b2ttdXNpYy5hcHAscmVsYXkKICAtIERPTUFJTi1TVUZGSVgsdGlrdG9rdi5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsdGlrdG9rdi51cyxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0cmFlLmFpLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLHR0d2Vidmlldy5jb20scmVsYXkKCiAgLSBET01BSU4tS0VZV09SRCxtdXNpY2FsLmx5LHJlbGF5CiAgLSBET01BSU4tS0VZV09SRCx0aWt0b2sscmVsYXkKICAtIFBST0NFU1MtTkFNRSxjb20uemhpbGlhb2FwcC5tdXNpY2FsbHkscmVsYXkKCiAgLSBET01BSU4tU1VGRklYLGFrYW1haXplZC5uZXQscmVsYXkKICAtIERPTUFJTi1TVUZGSVgscmVjYXB0Y2hhLm5ldCxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxnc3RhdGljLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxnb29nbGUuY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLGZvbnRzLmdzdGF0aWMuY29tLHJlbGF5CgogIC0gTUFUQ0gscmVsYXk="
+                  metadata:
+                    source: "platform-ui"
+                    description: "verified amd64 默认解析到 private_browser_edge:1.1-amd64"
+              verified-amd64-proxy-disabled:
+                summary: verified amd64 禁用代理示例
+                value:
+                  clientId: "9060900010001"
+                  name: "TikTok 主账号环境"
+                  rpaType: "tiktok"
+                  runtime:
+                    imagePolicy: "crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64"
+                    startupUrl: "https://www.tiktok.com/"
+                    shmSize: "1gb"
+                  environment:
+                    timezone: "Asia/Shanghai"
+                    language: "zh-CN"
+                    screen:
+                      width: 1440
+                      height: 900
+                      depth: 24
+                  proxy:
+                    enabled: false
+                    type: ""
+                    mode: ""
+                    configBase64: ""
+                  metadata:
+                    source: "platform-ui"
+                    description: "禁用代理时仍保留完整字段，方便前端按固定结构组装请求"
+            schema:
+              $ref: "#/components/schemas/CreateEnvRequest"
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。成功时 `data.env` 是刚写入的中心缓存记录。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateEnvUnifiedResponse"
+    get:
+      tags: [Browser Envs]
+      summary: 查询中心环境包聚合列表
+      description: >
+        返回当前主账号在 Node Server SQLite server_browser_envs 中的中心缓存列表。
+        当前版本不直接扫描 Edge 本地环境包目录，也不读取 Edge SQLite。
+      parameters:
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - name: clientId
+          in: query
+          required: false
+          schema:
+            type: string
+          example: "9060900010001"
+          description: 按中心 Client 身份过滤。
+        - name: rpaType
+          in: query
+          required: false
+          schema:
+            type: string
+          example: "tiktok"
+          description: 按业务类型过滤；Node Server 会把 tiktok/facebook/instagram/youtube/twitter 归一化成 tk/fb/ins/yt/x 后再查询中心缓存。
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [created, running, stopped, backed_up, deleted, archived, error]
+          example: "created"
+          description: 按中心环境包主状态过滤。
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 1
+          description: 页码，默认 1。
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
+          description: 每页数量，默认 20，最大 100。
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。`data.items` 来自 server_browser_envs 中心缓存。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListEnvsUnifiedResponse"
+
+  /api/v1/envs/{envId}:
+    get:
+      tags: [Browser Envs]
+      summary: 查询中心环境包详情
+      description: >
+        返回 Node Server 当前缓存的单个环境包摘要。
+        当前版本先以 server_browser_envs 为事实源，后续 run/stop/task 落地后再补充任务摘要和按需刷新。
+      parameters:
+        - $ref: "#/components/parameters/EnvId"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。`data` 是单个中心环境包缓存详情。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerBrowserEnvUnifiedResponse"
+
+  /api/v1/envs/{envId}/run:
+    post:
+      tags: [Browser Envs]
+      summary: 代理启动环境包（SSE任务）
+      description: >
+        Node Server 先根据 envId 读取中心环境包索引并校验目标 Edge Client 必须处于 healthy + verified + online，
+        然后立即返回中心 `taskId`/`eventsUrl`，真正的执行流程改由后台任务继续推进。
+        后台流程会先读取 Edge 环境包 `profile.runtime.image`，再用 Edge `/api/v1/edge/docker/images`
+        检查本机镜像是否已存在；如果缺镜像，会先调用 Edge `/api/v1/edge/docker/pull-image`，
+        镜像就绪后才继续调用 Edge `/api/v1/edge/browser-envs/:envId/run`。
+        前端应通过 `/api/v1/server/tasks/{taskId}/events` 观察 `image_check`、`pulling_image`、`edge_run`
+        和最终 `success/failed` 全过程；pull-image 或镜像预检失败时，本次 run 直接 failed，不自动重试。
+        最终 success/failed 也可以继续查询 `/api/v1/server/tasks/{taskId}`
+        或订阅 `/api/v1/server/tasks/{taskId}/events`。
+      parameters:
+        - $ref: "#/components/parameters/EnvId"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunEnvRequest"
+            example:
+              forceRecreate: false
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。成功时只表示中心任务已创建，最终结果要继续看 task detail 或 SSE。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartTaskUnifiedResponse"
+
+  /api/v1/envs/{envId}/stop:
+    post:
+      tags: [Browser Envs]
+      summary: 代理停止环境包（SSE任务）
+      description: >
+        Node Server 先根据 envId 读取中心环境包索引，再校验目标 Edge Client 必须处于 healthy + verified + online，
+        然后调用 Edge `/api/v1/edge/browser-envs/:envId/stop` 创建真实执行任务。
+        该接口不会直接等待容器完全停止，而是立即返回中心 `taskId`/`eventsUrl` 供前端继续观察。
+      parameters:
+        - $ref: "#/components/parameters/EnvId"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StopEnvRequest"
+            example:
+              timeoutSeconds: 10
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。成功时只表示中心 stop 任务已创建。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartTaskUnifiedResponse"
+
+  /api/v1/envs/{envId}/del:
+    delete:
+      tags: [Browser Envs]
+      summary: 删除环境包关联运行镜像
+      description: >
+        Node Server 先根据 envId 读取中心环境包索引，再校验目标 Edge Client 必须处于 healthy + verified + online，
+        然后同步代理调用 Edge `/api/v1/edge/browser-envs/:envId/del`。
+        该动作只删除目标环境包 profile.runtime.image 对应的本机 Docker 镜像，不删除环境包目录、
+        browser-data/profile 或中心缓存记录；如果镜像仍被其他容器引用，返回结果中的 warningMessage
+        会明确提示调用方先清理引用容器。
+      parameters:
+        - $ref: "#/components/parameters/EnvId"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。该接口是同步删除镜像结果，不会返回 taskId。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteEnvImageUnifiedResponse"
+
+  /api/v1/envs/{envId}/package:
+    delete:
+      tags: [Browser Envs]
+      summary: 代理彻底销毁环境包（SSE任务）
+      description: >
+        Node Server 先根据 envId 读取中心环境包索引，再校验目标 Edge Client 必须处于 healthy + verified + online，
+        然后调用 Edge `/api/v1/edge/browser-envs/:envId/package` 创建真实删除任务。
+        成功后 Edge 会物理删除环境目录、browser-data/profile、已停止容器和 Edge 本地 SQLite 索引；
+        Node Server 继续保留一条 status=deleted 的中心缓存记录，用于任务查询和审计，不自动重试。
+      parameters:
+        - $ref: "#/components/parameters/EnvId"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。成功时只表示中心删除任务已创建。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartTaskUnifiedResponse"
+
+  /api/v1/server/tasks:
+    get:
+      tags: [Server Tasks]
+      summary: 查询中心任务列表
+      description: >
+        返回当前主账号下的中心任务持久化记录。第一版主要服务 NodeServer 与 EdgeClient 链路联调，
+        列表接口只读 SQLite 缓存，不会批量刷新所有 Edge 任务状态；需要实时状态时请调用任务详情接口。
+      parameters:
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - name: clientId
+          in: query
+          schema:
+            type: string
+          example: "9060900010001"
+        - name: envId
+          in: query
+          schema:
+            type: string
+          example: "906090001_tiktok_1781223344556677888"
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [create_env, run_env, stop_env, pull_image, backup_env]
+          example: "run_env"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, running, success, failed, canceled]
+          example: "running"
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          example: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+          example: 20
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。任务列表只读中心 SQLite 缓存。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListTasksUnifiedResponse"
+
+  /api/v1/server/tasks/{taskId}:
+    get:
+      tags: [Server Tasks]
+      summary: 查询中心任务详情
+      description: >
+        返回单个中心任务详情。若任务尚未进入终态且已绑定 Edge taskId，
+        Node Server 会在读取时尝试同步一次 Edge 当前状态；如果 Edge task 丢失，
+        Node Server 会再通过环境包详情确认动作是否真的完成，无法确认时统一收敛为 failed。
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。`data.task` 是中心持久事实，`data.edge` 是当前可读到的边缘短期快照。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskDetailUnifiedResponse"
+
+  /api/v1/server/tasks/{taskId}/events:
+    get:
+      tags: [Server Tasks]
+      summary: 订阅中心任务事件流（SSE任务）
+      description: >
+        这是 Node Server 对外暴露的统一 SSE 事件流。
+        对于 `run_env` 这类带中心前置阶段的任务，Node Server 会先输出自己的阶段事件，
+        例如 `queued`、`image_check`、`pulling_image`、`edge_run`、`done/error`；
+        对于仍然直接委托给 Edge 的任务，当前会在本地事件流缺失时回退到 Edge `/api/v1/edge/tasks/{taskId}/events` 代理模式。
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+      responses:
+        "200":
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
 
 components:
   parameters:
@@ -148,7 +713,57 @@ components:
         type: string
       example: "owner"
       description: 当前操作者角色，V1 demo 只记录，不做权限判定。
+    EnvId:
+      name: envId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: "906090001_tiktok_1781223344556677888"
+      description: 环境包 ID，由 mainAccountId 作为 userId 参与生成，保证资产归属稳定。
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: "task_1781223344556677888"
+      description: Node Server 持久化中心任务 ID，用于串联任务详情与 SSE 观察。
   schemas:
+    ServerHealthResponse:
+      type: object
+      description: Node Server 本机健康摘要；只反映中心服务自身和 SQLite 初始化状态。
+      properties:
+        ok:
+          type: boolean
+          example: true
+        service:
+          type: string
+          example: private-browser-server
+        mode:
+          type: string
+          example: production
+        version:
+          type: string
+          example: 0.1.0
+        configFile:
+          type: string
+          example: /app/Settings/config-docker.yaml
+        sqlite:
+          type: object
+          properties:
+            path:
+              type: string
+              example: /app/data/private_browser_server.sqlite
+            maxOpenConns:
+              type: integer
+              example: 1
+            maxIdleConns:
+              type: integer
+              example: 1
+        romInitialized:
+          type: boolean
+          example: true
     ProbeDockerRequest:
       type: object
       required: [dockerApiUrl]
@@ -156,6 +771,35 @@ components:
         dockerApiUrl:
           type: string
           example: "http://192.168.10.119:2375"
+    HeartbeatRequest:
+      type: object
+      required: [discoveryMagic, protocolVersion, service, discoveryGroup]
+      description: >
+        Edge Client 正式心跳的最小请求体。
+        只允许 discovery 域识别字段和接入摘要，不允许携带 proxy 明文、fingerprint raw、
+        browser-data/profile 或任何登录态资产。
+      properties:
+        discoveryMagic:
+          type: string
+          example: PRIVATE_BROWSER_CLIENT_DISCOVERY
+        protocolVersion:
+          type: integer
+          example: 1
+        service:
+          type: string
+          example: private-browser-client
+        discoveryGroup:
+          type: string
+          example: default
+        baseUrl:
+          type: string
+          example: http://192.168.10.119:3300
+        clientIp:
+          type: string
+          example: 192.168.10.119
+        lastHeartbeatAt:
+          type: integer
+          example: 1781061878
     RegisterNodeRequest:
       type: object
       required: [name, baseUrl]
@@ -172,10 +816,64 @@ components:
         dockerApiUrl:
           type: string
           example: "http://192.168.10.119:2375"
-    ControlNode:
+    ProbeDockerResponse:
+      type: object
+      description: 一次性 Docker 2375 探测结果，不会写入数据库。
+      properties:
+        reachable:
+          type: boolean
+          example: true
+        dockerApiUrl:
+          type: string
+          example: http://192.168.10.119:2375
+        os:
+          type: string
+          example: Debian GNU/Linux 12 (bookworm)
+        arch:
+          type: string
+          example: amd64
+        rawArch:
+          type: string
+          example: x86_64
+        cpuCores:
+          type: integer
+          example: 16
+        memoryTotalMb:
+          type: integer
+          example: 64299
+        dockerVersion:
+          type: string
+          example: 28.3.3
+        dockerApiVersion:
+          type: string
+          example: "1.51"
+        containers:
+          type: integer
+          example: 2
+        images:
+          type: integer
+          example: 7
+        checkedAt:
+          type: integer
+          example: 1781061878
+        troubleshooting:
+          type: string
+          example: ""
+    ProbeDockerUnifiedResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/ProbeDockerResponse"
+    EdgeClient:
       type: object
       description: >
-        Node Server 保存的 Client 中心索引。对外统一使用 clientId；
+        Node Server 保存的 Edge Client 中心索引。对外统一使用 clientId；
         SQLite 内部使用 edge_clients.id 保存，Client Edge 本身不生成该 ID。
       properties:
         clientId:
@@ -199,12 +897,818 @@ components:
         dockerApiUrl:
           type: string
           example: "http://192.168.10.119:2375"
+        os:
+          type: string
+          example: Debian GNU/Linux 12 (bookworm)
         arch:
           type: string
           example: "amd64"
+        cpuCores:
+          type: integer
+          example: 16
+        memoryTotalMb:
+          type: integer
+          example: 64299
+        dockerVersion:
+          type: string
+          example: 28.3.3
         healthStatus:
           type: string
           example: "healthy"
         discoveryStatus:
           type: string
-          example: "manual"
+          enum: [manual, verified]
+          example: "verified"
+        heartbeatStatus:
+          type: string
+          enum: [online, stale, offline]
+          example: "online"
+          description: >
+            根据 lastHeartbeatAt 和 discovery 阈值动态计算，只表示 UDP beacon 新鲜度；
+            不替代 healthStatus，也不表示节点已经 verified。
+        lastHeartbeatAt:
+          type: integer
+          example: 1781063343
+        lastHeartbeatReportedAt:
+          type: integer
+          example: 1781063342
+        lastHeartbeatSource:
+          type: string
+          enum: [udp, http]
+          example: http
+        lastCheckedAt:
+          type: integer
+          example: 1781063343
+        lastError:
+          type: string
+          example: ""
+        createdByUserId:
+          type: string
+          example: user_1780995561009325000_000001
+        createdByUsername:
+          type: string
+          example: user_906090001
+        createdAt:
+          type: integer
+          example: 1781061788
+        updatedAt:
+          type: integer
+          example: 1781063343
+        deletedAt:
+          type: integer
+          example: 0
+    EdgeClientListData:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/EdgeClient"
+        total:
+          type: integer
+          example: 1
+    EdgeClientUnifiedResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/EdgeClient"
+    EdgeClientListUnifiedResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/EdgeClientListData"
+    DiscoveredClientsResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          type: object
+          properties:
+            total:
+              type: integer
+              example: 2
+              items:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DiscoveredClient"
+    HeartbeatResponse:
+      type: object
+      description: >
+        正式心跳上报成功后的中心摘要。
+        `lastHeartbeatAt` 是 Node Server 实际收到时间；`lastHeartbeatReportedAt` 是 Client 自报时间。
+      properties:
+        clientId:
+          type: string
+          example: "9060900010001"
+        mainAccountId:
+          type: string
+          example: "906090001"
+        baseUrl:
+          type: string
+          example: "http://192.168.10.119:3300"
+        clientIp:
+          type: string
+          example: "192.168.10.119"
+        lastHeartbeatAt:
+          type: integer
+          example: 1781061879
+        lastHeartbeatReportedAt:
+          type: integer
+          example: 1781061878
+        heartbeatStatus:
+          type: string
+          enum: [online, stale, offline]
+          example: online
+        updatedAt:
+          type: integer
+          example: 1781061879
+        client:
+          $ref: "#/components/schemas/EdgeClient"
+    HeartbeatUnifiedResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/HeartbeatResponse"
+    DiscoveredClient:
+      type: object
+      description: >
+        UDP discovery 展示项。clientId 由 Node Server 查询当前主账号已注册 Client 后补充；
+        UDP beacon 本身不携带 clientId。前端只需要判断 clientId 是否为空来区分已绑定/未绑定。
+      properties:
+        clientId:
+          type: string
+          example: "9060900010001"
+        sourceIp:
+          type: string
+          example: "192.168.10.119"
+        sourcePort:
+          type: integer
+          example: 46101
+        firstSeenAt:
+          type: integer
+          example: 1781058681
+        lastSeenAt:
+          type: integer
+          example: 1781061878
+        receiveCount:
+          type: integer
+          example: 508
+        payload:
+          type: object
+          properties:
+            discoveryMagic:
+              type: string
+              example: PRIVATE_BROWSER_CLIENT_DISCOVERY
+            protocolVersion:
+              type: integer
+              example: 1
+            service:
+              type: string
+              example: private-browser-client
+            discoveryGroup:
+              type: string
+              example: default
+            clientIp:
+              type: string
+              example: "192.168.10.119"
+            baseUrl:
+              type: string
+              example: "http://192.168.10.119:3300"
+            hostname:
+              type: string
+              example: "192.168.10.119"
+            mode:
+              type: string
+              example: production
+            version:
+              type: string
+              example: "0.1.9"
+            startedAt:
+              type: integer
+              example: 1781061788
+            lastHeartbeatAt:
+              type: integer
+              example: 1781061878
+            capabilities:
+              type: array
+              items:
+                type: string
+              example: ["edge-api", "docker-2375", "browser-env-lifecycle", "webvnc", "swagger", "sse-task-progress"]
+    VerifyEdgeClientResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          type: object
+          properties:
+            client:
+              $ref: "#/components/schemas/EdgeClient"
+            clientId:
+              type: string
+              example: "9060900010001"
+            nextAction:
+              type: string
+              example: "请先确认 Client 容器运行、UDP discovery 可达，再重新调用 verify"
+            checks:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/VerifyCheck"
+    VerifyCheck:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [passed, failed]
+          example: passed
+        message:
+          type: string
+          example: UDP 心跳在线
+    RefreshEdgeClientResponse:
+      type: object
+      properties:
+        node:
+          $ref: "#/components/schemas/EdgeClient"
+        probe:
+          $ref: "#/components/schemas/ProbeDockerResponse"
+    RefreshEdgeClientUnifiedResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/RefreshEdgeClientResponse"
+    BrowserEnvPorts:
+      type: object
+      description: Edge 创建环境包后返回的本机端口摘要。
+      properties:
+        cdp:
+          type: integer
+          example: 8101
+        vnc:
+          type: integer
+          example: 9101
+    CreateEnvRuntimeRequest:
+      type: object
+      description: >
+        普通前端或用户不应随意拼装镜像字符串；imagePolicy 应由 Platform 或中心管理服务受控下发。
+        当前过渡阶段，Platform 先直接给出已登记镜像字符串；Node Server 仍会校验该值是否属于受控策略。
+        imagePolicy 为空时按默认稳定策略处理；当前 verified amd64 节点默认会解析到
+        crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64。
+      properties:
+        imagePolicy:
+          type: string
+          example: "crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64"
+          description: >
+            Platform 当前下发的受控 imagePolicy 值。过渡阶段该值暂时直接等于已登记镜像字符串。
+            verified amd64 节点当前推荐值为
+            crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64。
+        startupUrl:
+          type: string
+          example: "https://www.tiktok.com/"
+        shmSize:
+          type: string
+          example: "1gb"
+    CreateEnvEnvironment:
+      type: object
+      required: [timezone, language, screen]
+      properties:
+        timezone:
+          type: string
+          example: "Asia/Shanghai"
+        language:
+          type: string
+          example: "zh-CN"
+        screen:
+          $ref: "#/components/schemas/CreateEnvScreen"
+    CreateEnvScreen:
+      type: object
+      required: [width, height, depth]
+      properties:
+        width:
+          type: integer
+          example: 1440
+        height:
+          type: integer
+          example: 900
+        depth:
+          type: integer
+          example: 24
+    CreateEnvProxyRequest:
+      type: object
+      description: >
+        代理配置会原样转发给 Edge；Node Server 不解码、不保存代理 YAML 明文。
+        当 enabled=true 时，必须提供完整 configBase64。
+      properties:
+        enabled:
+          type: boolean
+          nullable: true
+          example: true
+        type:
+          type: string
+          example: "clash-verge"
+        mode:
+          type: string
+          example: "rule"
+        configBase64:
+          type: string
+          example: "bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3CmFsbG93LWxhbjogdHJ1ZQpiaW5kLWFkZHJlc3M6IDAuMC4wLjAKbG9nLWxldmVsOiBzaWxlbnQKdW5pZmllZC1kZWxheTogdHJ1ZQpmaW5kLXByb2Nlc3MtbW9kZTogc3RyaWN0CnVkcDogZmFsc2UKCmRuczoKICBlbmFibGU6IHRydWUKICBpcHY2OiBmYWxzZQogIGxpc3RlbjogMC4wLjAuMDo1NDU0CiAgbmFtZXNlcnZlcjoKICAgIC0gdGxzOi8vMS4xLjEuMQogICAgLSB0bHM6Ly84LjguOC44CiAgICAtIGh0dHBzOi8vMS4wLjAuMS9kbnMtcXVlcnkKICBmYWxsYmFjazoKICAgIC0gdGxzOi8vMS4wLjAuMQogIGZhbGxiYWNrLWZpbHRlcjoKICAgIGdlb2lwOiBmYWxzZQogIHByb3h5LXNlcnZlci1uYW1lc2VydmVyOgogICAgLSB0bHM6Ly8xLjEuMS4xCiAgbmFtZXNlcnZlci1wb2xpY3k6IHt9CiAgdXNlLXN5c3RlbS1kbnM6IGZhbHNlCiAgdXNlLWhvc3RzOiBmYWxzZQogIGZha2UtaXAtZmlsdGVyOgogICAgLSArLmxhbgogICAgLSAiKi5sb2NhbCIKICAgIC0gIioubXNmdGNvbm5lY3R0ZXN0LmNvbSIKICAgIC0gIioubXNmdG5jc2kuY29tIgogICAgLSArLmFwcGxlLmNvbQogICAgLSAiKi5iYWlkdS5jb20iCiAgICAtICIqLmpkLmNvbSIKICByZXNwZWN0LXJ1bGVzOiB0cnVlCgpudHA6CiAgZW5hYmxlOiB0cnVlCiAgd3JpdGUtdG8tc3lzdGVtOiBmYWxzZQogIHNlcnZlcjogbnRwMS5hbGl5dW4uY29tCiAgcG9ydDogMTIzCiAgaW50ZXJ2YWw6IDMwCgp0dW46CiAgZW5hYmxlOiB0cnVlCiAgc3RhY2s6IHN5c3RlbQogIGF1dG8tcm91dGU6IHRydWUKICBhdXRvLWRldGVjdC1pbnRlcmZhY2U6IHRydWUKICBtdHU6IDE1MDAKICBkbnMtaGlqYWNrOgogICAgLSAwLjAuMC4wOjUzCiAgICAtIDAuMC4wLjA6ODUzCiAgICAtIDAuMC4wLjA6NDQzCiAgICAtIDAuMC4wLjA6NTM1MwogICAgLSAwLjAuMC4wOjUwNTMKICAgIC0gMC4wLjAuMDo3ODQKICAgIC0gMC4wLjAuMDo4ODUzCiAgICAtIDAuMC4wLjA6NTQKICAgIC0gMC4wLjAuMDoxMDUzCiAgaW5ldDQtcm91dGUtYWRkcmVzczoKICAgIC0gMC4wLjAuMC8xCiAgICAtIDEyOC4wLjAuMC8xCiAgICAtIDE5OC4xOC4wLjAvMTYKICBpbmV0NC1yb3V0ZS1leGNsdWRlLWFkZHJlc3M6CiAgICAtIDAuMC4wLjAvMzIKICAgIC0gMTAuMC4wLjAvOAogICAgLSAxMDAuNjQuMC4wLzEwCiAgICAtIDEyNy4wLjAuMC84CiAgICAtIDE2OS4yNTQuMC4wLzE2CiAgICAtIDE3Mi4xNi4wLjAvMTIKICAgIC0gMTkyLjE2OC4wLjAvMTYKICAgIC0gMjI0LjAuMC4wLzQKICAgIC0gMjQwLjAuMC4wLzQKICAgIC0gMjU1LjI1NS4yNTUuMjU1LzMyCgpzbmlmZmVyOgogIGVuYWJsZTogdHJ1ZQogIGZvcmNlLWRucy1tYXBwaW5nOiB0cnVlCiAgcGFyc2UtcHVyZS1pcDogdHJ1ZQogIG92ZXJyaWRlLWRlc3RpbmF0aW9uOiBmYWxzZQogIHNuaWZmOgogICAgVExTOgogICAgICBwb3J0czoKICAgICAgICAtIDQ0MwogICAgICAgIC0gODQ0MwogICAgSFRUUDoKICAgICAgcG9ydHM6CiAgICAgICAgLSA4MAogICAgICAgIC0gODA4MC04ODgwCiAgICAgIG92ZXJyaWRlLWRlc3RpbmF0aW9uOiB0cnVlCiAgICBRVUlDOgogICAgICBwb3J0czoKICAgICAgICAtIDQ0MwogICAgICAgIC0gODQ0MwogIGZvcmNlLWRvbWFpbjogW10KCnByb3hpZXM6CiAgLSBuYW1lOiB0dXJib05vZGUKICAgIHR5cGU6IHZtZXNzCiAgICBzZXJ2ZXI6IGM1N3MzLnBvcnRhYmxlc3VibWFyaW5lcy5jb20KICAgIHBvcnQ6IDEwNzc3CiAgICBjaXBoZXI6IGF1dG8KICAgIHV1aWQ6IDExYzdiODllLWIyMmUtNDVlZi1hYjVkLTczNTk4YTFlMzQ0NgogICAgYWx0ZXJJZDogMAoKICAtIG5hbWU6IG91dE5vZGUKICAgIHR5cGU6IGh0dHAKICAgIHNlcnZlcjogdXMudWRlYWxwcm94eS5jb20KICAgIHBvcnQ6IDY2NjYKICAgIHVzZXJuYW1lOiB1c2VySWQtMTcxNi1jdXN0b20tNTc5OS1yZWdpb24tc2cKICAgIHBhc3N3b3JkOiBVeG1PYmdhYjBrNHgKICAgIGRpYWxlci1wcm94eTogdHVyYm9Ob2RlCiAgICBza2lwLWNlcnQtdmVyaWZ5OiB0cnVlCgpwcm94eS1ncm91cHM6CiAgLSBuYW1lOiByZWxheQogICAgdHlwZTogc2VsZWN0CiAgICBwcm94aWVzOgogICAgICAtIG91dE5vZGUKICAgICAgLSB0dXJib05vZGUKCnJ1bGVzOgogIC0gSVAtQ0lEUiwyMjMuNS41LjUvMzIsUkVKRUNULG5vLXJlc29sdmUKICAtIElQLUNJRFIsMjIzLjYuNi42LzMyLFJFSkVDVCxuby1yZXNvbHZlCiAgLSBJUC1DSURSLDExNC4xMTQuMTE0LjExNC8zMixSRUpFQ1Qsbm8tcmVzb2x2ZQogIC0gSVAtQ0lEUiwxMTQuMTE0LjExNS4xMTUvMzIsUkVKRUNULG5vLXJlc29sdmUKICAtIElQLUNJRFIsMTE5LjI5LjI5LjI5LzMyLFJFSkVDVCxuby1yZXNvbHZlCiAgLSBJUC1DSURSLDE4MC43Ni43Ni43Ni8zMixSRUpFQ1Qsbm8tcmVzb2x2ZQoKICAtIERTVC1QT1JULDUzLHJlbGF5CiAgLSBEU1QtUE9SVCw4NTMscmVsYXkKICAtIERTVC1QT1JULDUzNTMscmVsYXkKICAtIERTVC1QT1JULDUwNTMscmVsYXkKCiAgLSBET01BSU4tU1VGRklYLGRucy5hbGlkbnMuY29tLFJFSkVDVAogIC0gRE9NQUlOLVNVRkZJWCxwdWJsaWMxLmFsaWRucy5jb20sUkVKRUNUCiAgLSBET01BSU4tU1VGRklYLHB1YmxpYzIuYWxpZG5zLmNvbSxSRUpFQ1QKICAtIERPTUFJTi1TVUZGSVgsZG5zLnB1YixSRUpFQ1QKICAtIERPTUFJTi1TVUZGSVgsZG9oLnB1YixSRUpFQ1QKICAtIERPTUFJTi1TVUZGSVgsYWxpZG5zLmNvbSxSRUpFQ1QKCiAgLSBEU1QtUE9SVCw0NDMscmVsYXksVENQCiAgLSBEU1QtUE9SVCw0NDMsUkVKRUNULFVEUAoKICAtIEdFT0lQLExBTixESVJFQ1QKICAtIElQLUNJRFIsMTkyLjE2OC4wLjAvMTYsRElSRUNUCiAgLSBJUC1DSURSLDEwLjAuMC4wLzgsRElSRUNUCiAgLSBJUC1DSURSLDE3Mi4xNi4wLjAvMTIsRElSRUNUCiAgLSBJUC1DSURSLDEyNy4wLjAuMC84LERJUkVDVAogIC0gSVAtQ0lEUiwxMDAuNjQuMC4wLzEwLERJUkVDVAoKICAtIERPTUFJTixsZjE2LWVmZmVjdGNkbi5ieXRlZWZmZWN0dG9zLWcuY29tLHJlbGF5CiAgLSBET01BSU4sbGYxNi1wa2djZG4ucGl0YXlhLWNsaWVudGFpLmNvbSxyZWxheQogIC0gRE9NQUlOLHAxNi10aWt0b2tjZG4tY29tLmFrYW1haXplZC5uZXQscmVsYXkKICAtIERPTUFJTix0cmFlLWFwaS1zZy5tY2hvc3QuZ3VydSxyZWxheQoKICAtIERPTUFJTi1TVUZGSVgsYnl0ZWRhcG0uY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLGJ5dGVnZWNrby1pMThuLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxieXRlaW50bGFwaS5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsYnl0ZW92ZXJzZWEuY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLGNhcGN1dC5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsaWJ5dGVkdG9zLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxpYnl0ZWltZy5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsaXBzdGF0cC5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsaXNuc3Nkay5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsbWFyc2NvZGUuY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLG11c2Nkbi5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsbXVzaWNhbC5seSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxzZ3BzdGF0cC5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsc25zc2RrLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWstdG9rYXBpLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWt0b2suY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLHRpa3Rva2Nkbi11cy5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsdGlrdG9rY2RuLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWt0b2tkLm5ldCxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWt0b2tkLm9yZyxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWt0b2ttdXNpYy5hcHAscmVsYXkKICAtIERPTUFJTi1TVUZGSVgsdGlrdG9rdi5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsdGlrdG9rdi51cyxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0cmFlLmFpLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLHR0d2Vidmlldy5jb20scmVsYXkKCiAgLSBET01BSU4tS0VZV09SRCxtdXNpY2FsLmx5LHJlbGF5CiAgLSBET01BSU4tS0VZV09SRCx0aWt0b2sscmVsYXkKICAtIFBST0NFU1MtTkFNRSxjb20uemhpbGlhb2FwcC5tdXNpY2FsbHkscmVsYXkKCiAgLSBET01BSU4tU1VGRklYLGFrYW1haXplZC5uZXQscmVsYXkKICAtIERPTUFJTi1TVUZGSVgscmVjYXB0Y2hhLm5ldCxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxnc3RhdGljLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxnb29nbGUuY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLGZvbnRzLmdzdGF0aWMuY29tLHJlbGF5CgogIC0gTUFUQ0gscmVsYXk="
+    CreateEnvMetadataRequest:
+      type: object
+      description: 只保存环境包说明类字段，不参与身份和镜像判断。
+      properties:
+        source:
+          type: string
+          example: "platform-ui"
+        description:
+          type: string
+          example: "TikTok 主账号专用环境"
+    CreateEnvRequest:
+      type: object
+      required: [clientId, name, rpaType, environment]
+      description: >
+        Node Server 创建环境包请求。
+        真正发给 Edge 的 userId 固定取 X-Main-Account-Id，避免子账号把 envId 第一段变成错误归属。
+        rpaType 支持传 tiktok/facebook/instagram/youtube/twitter 这类业务别名，Node Server 会在下发 Edge 前归一化成 tk/fb/ins/yt/x。
+        当前 Swagger 示例按 verified amd64 节点准备，imagePolicy 由 Platform 受控给出；
+        过渡阶段该值先直接传已登记镜像字符串，Node Server 校验通过后会下发同一条 runtime.image。
+        crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64。
+      example:
+        clientId: "9060900010001"
+        name: "TikTok 主账号环境"
+        rpaType: "tiktok"
+        runtime:
+          imagePolicy: "crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64"
+          startupUrl: "https://www.tiktok.com/"
+          shmSize: "1gb"
+        environment:
+          timezone: "Asia/Shanghai"
+          language: "zh-CN"
+          screen:
+            width: 1440
+            height: 900
+            depth: 24
+        proxy:
+          enabled: true
+          type: "clash-verge"
+          mode: "rule"
+          configBase64: "bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3CmFsbG93LWxhbjogdHJ1ZQpiaW5kLWFkZHJlc3M6IDAuMC4wLjAKbG9nLWxldmVsOiBzaWxlbnQKdW5pZmllZC1kZWxheTogdHJ1ZQpmaW5kLXByb2Nlc3MtbW9kZTogc3RyaWN0CnVkcDogZmFsc2UKCmRuczoKICBlbmFibGU6IHRydWUKICBpcHY2OiBmYWxzZQogIGxpc3RlbjogMC4wLjAuMDo1NDU0CiAgbmFtZXNlcnZlcjoKICAgIC0gdGxzOi8vMS4xLjEuMQogICAgLSB0bHM6Ly84LjguOC44CiAgICAtIGh0dHBzOi8vMS4wLjAuMS9kbnMtcXVlcnkKICBmYWxsYmFjazoKICAgIC0gdGxzOi8vMS4wLjAuMQogIGZhbGxiYWNrLWZpbHRlcjoKICAgIGdlb2lwOiBmYWxzZQogIHByb3h5LXNlcnZlci1uYW1lc2VydmVyOgogICAgLSB0bHM6Ly8xLjEuMS4xCiAgbmFtZXNlcnZlci1wb2xpY3k6IHt9CiAgdXNlLXN5c3RlbS1kbnM6IGZhbHNlCiAgdXNlLWhvc3RzOiBmYWxzZQogIGZha2UtaXAtZmlsdGVyOgogICAgLSArLmxhbgogICAgLSAiKi5sb2NhbCIKICAgIC0gIioubXNmdGNvbm5lY3R0ZXN0LmNvbSIKICAgIC0gIioubXNmdG5jc2kuY29tIgogICAgLSArLmFwcGxlLmNvbQogICAgLSAiKi5iYWlkdS5jb20iCiAgICAtICIqLmpkLmNvbSIKICByZXNwZWN0LXJ1bGVzOiB0cnVlCgpudHA6CiAgZW5hYmxlOiB0cnVlCiAgd3JpdGUtdG8tc3lzdGVtOiBmYWxzZQogIHNlcnZlcjogbnRwMS5hbGl5dW4uY29tCiAgcG9ydDogMTIzCiAgaW50ZXJ2YWw6IDMwCgp0dW46CiAgZW5hYmxlOiB0cnVlCiAgc3RhY2s6IHN5c3RlbQogIGF1dG8tcm91dGU6IHRydWUKICBhdXRvLWRldGVjdC1pbnRlcmZhY2U6IHRydWUKICBtdHU6IDE1MDAKICBkbnMtaGlqYWNrOgogICAgLSAwLjAuMC4wOjUzCiAgICAtIDAuMC4wLjA6ODUzCiAgICAtIDAuMC4wLjA6NDQzCiAgICAtIDAuMC4wLjA6NTM1MwogICAgLSAwLjAuMC4wOjUwNTMKICAgIC0gMC4wLjAuMDo3ODQKICAgIC0gMC4wLjAuMDo4ODUzCiAgICAtIDAuMC4wLjA6NTQKICAgIC0gMC4wLjAuMDoxMDUzCiAgaW5ldDQtcm91dGUtYWRkcmVzczoKICAgIC0gMC4wLjAuMC8xCiAgICAtIDEyOC4wLjAuMC8xCiAgICAtIDE5OC4xOC4wLjAvMTYKICBpbmV0NC1yb3V0ZS1leGNsdWRlLWFkZHJlc3M6CiAgICAtIDAuMC4wLjAvMzIKICAgIC0gMTAuMC4wLjAvOAogICAgLSAxMDAuNjQuMC4wLzEwCiAgICAtIDEyNy4wLjAuMC84CiAgICAtIDE2OS4yNTQuMC4wLzE2CiAgICAtIDE3Mi4xNi4wLjAvMTIKICAgIC0gMTkyLjE2OC4wLjAvMTYKICAgIC0gMjI0LjAuMC4wLzQKICAgIC0gMjQwLjAuMC4wLzQKICAgIC0gMjU1LjI1NS4yNTUuMjU1LzMyCgpzbmlmZmVyOgogIGVuYWJsZTogdHJ1ZQogIGZvcmNlLWRucy1tYXBwaW5nOiB0cnVlCiAgcGFyc2UtcHVyZS1pcDogdHJ1ZQogIG92ZXJyaWRlLWRlc3RpbmF0aW9uOiBmYWxzZQogIHNuaWZmOgogICAgVExTOgogICAgICBwb3J0czoKICAgICAgICAtIDQ0MwogICAgICAgIC0gODQ0MwogICAgSFRUUDoKICAgICAgcG9ydHM6CiAgICAgICAgLSA4MAogICAgICAgIC0gODA4MC04ODgwCiAgICAgIG92ZXJyaWRlLWRlc3RpbmF0aW9uOiB0cnVlCiAgICBRVUlDOgogICAgICBwb3J0czoKICAgICAgICAtIDQ0MwogICAgICAgIC0gODQ0MwogIGZvcmNlLWRvbWFpbjogW10KCnByb3hpZXM6CiAgLSBuYW1lOiB0dXJib05vZGUKICAgIHR5cGU6IHZtZXNzCiAgICBzZXJ2ZXI6IGM1N3MzLnBvcnRhYmxlc3VibWFyaW5lcy5jb20KICAgIHBvcnQ6IDEwNzc3CiAgICBjaXBoZXI6IGF1dG8KICAgIHV1aWQ6IDExYzdiODllLWIyMmUtNDVlZi1hYjVkLTczNTk4YTFlMzQ0NgogICAgYWx0ZXJJZDogMAoKICAtIG5hbWU6IG91dE5vZGUKICAgIHR5cGU6IGh0dHAKICAgIHNlcnZlcjogdXMudWRlYWxwcm94eS5jb20KICAgIHBvcnQ6IDY2NjYKICAgIHVzZXJuYW1lOiB1c2VySWQtMTcxNi1jdXN0b20tNTc5OS1yZWdpb24tc2cKICAgIHBhc3N3b3JkOiBVeG1PYmdhYjBrNHgKICAgIGRpYWxlci1wcm94eTogdHVyYm9Ob2RlCiAgICBza2lwLWNlcnQtdmVyaWZ5OiB0cnVlCgpwcm94eS1ncm91cHM6CiAgLSBuYW1lOiByZWxheQogICAgdHlwZTogc2VsZWN0CiAgICBwcm94aWVzOgogICAgICAtIG91dE5vZGUKICAgICAgLSB0dXJib05vZGUKCnJ1bGVzOgogIC0gSVAtQ0lEUiwyMjMuNS41LjUvMzIsUkVKRUNULG5vLXJlc29sdmUKICAtIElQLUNJRFIsMjIzLjYuNi42LzMyLFJFSkVDVCxuby1yZXNvbHZlCiAgLSBJUC1DSURSLDExNC4xMTQuMTE0LjExNC8zMixSRUpFQ1Qsbm8tcmVzb2x2ZQogIC0gSVAtQ0lEUiwxMTQuMTE0LjExNS4xMTUvMzIsUkVKRUNULG5vLXJlc29sdmUKICAtIElQLUNJRFIsMTE5LjI5LjI5LjI5LzMyLFJFSkVDVCxuby1yZXNvbHZlCiAgLSBJUC1DSURSLDE4MC43Ni43Ni43Ni8zMixSRUpFQ1Qsbm8tcmVzb2x2ZQoKICAtIERTVC1QT1JULDUzLHJlbGF5CiAgLSBEU1QtUE9SVCw4NTMscmVsYXkKICAtIERTVC1QT1JULDUzNTMscmVsYXkKICAtIERTVC1QT1JULDUwNTMscmVsYXkKCiAgLSBET01BSU4tU1VGRklYLGRucy5hbGlkbnMuY29tLFJFSkVDVAogIC0gRE9NQUlOLVNVRkZJWCxwdWJsaWMxLmFsaWRucy5jb20sUkVKRUNUCiAgLSBET01BSU4tU1VGRklYLHB1YmxpYzIuYWxpZG5zLmNvbSxSRUpFQ1QKICAtIERPTUFJTi1TVUZGSVgsZG5zLnB1YixSRUpFQ1QKICAtIERPTUFJTi1TVUZGSVgsZG9oLnB1YixSRUpFQ1QKICAtIERPTUFJTi1TVUZGSVgsYWxpZG5zLmNvbSxSRUpFQ1QKCiAgLSBEU1QtUE9SVCw0NDMscmVsYXksVENQCiAgLSBEU1QtUE9SVCw0NDMsUkVKRUNULFVEUAoKICAtIEdFT0lQLExBTixESVJFQ1QKICAtIElQLUNJRFIsMTkyLjE2OC4wLjAvMTYsRElSRUNUCiAgLSBJUC1DSURSLDEwLjAuMC4wLzgsRElSRUNUCiAgLSBJUC1DSURSLDE3Mi4xNi4wLjAvMTIsRElSRUNUCiAgLSBJUC1DSURSLDEyNy4wLjAuMC84LERJUkVDVAogIC0gSVAtQ0lEUiwxMDAuNjQuMC4wLzEwLERJUkVDVAoKICAtIERPTUFJTixsZjE2LWVmZmVjdGNkbi5ieXRlZWZmZWN0dG9zLWcuY29tLHJlbGF5CiAgLSBET01BSU4sbGYxNi1wa2djZG4ucGl0YXlhLWNsaWVudGFpLmNvbSxyZWxheQogIC0gRE9NQUlOLHAxNi10aWt0b2tjZG4tY29tLmFrYW1haXplZC5uZXQscmVsYXkKICAtIERPTUFJTix0cmFlLWFwaS1zZy5tY2hvc3QuZ3VydSxyZWxheQoKICAtIERPTUFJTi1TVUZGSVgsYnl0ZWRhcG0uY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLGJ5dGVnZWNrby1pMThuLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxieXRlaW50bGFwaS5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsYnl0ZW92ZXJzZWEuY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLGNhcGN1dC5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsaWJ5dGVkdG9zLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxpYnl0ZWltZy5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsaXBzdGF0cC5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsaXNuc3Nkay5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsbWFyc2NvZGUuY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLG11c2Nkbi5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsbXVzaWNhbC5seSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxzZ3BzdGF0cC5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsc25zc2RrLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWstdG9rYXBpLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWt0b2suY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLHRpa3Rva2Nkbi11cy5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsdGlrdG9rY2RuLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWt0b2tkLm5ldCxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWt0b2tkLm9yZyxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0aWt0b2ttdXNpYy5hcHAscmVsYXkKICAtIERPTUFJTi1TVUZGSVgsdGlrdG9rdi5jb20scmVsYXkKICAtIERPTUFJTi1TVUZGSVgsdGlrdG9rdi51cyxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCx0cmFlLmFpLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLHR0d2Vidmlldy5jb20scmVsYXkKCiAgLSBET01BSU4tS0VZV09SRCxtdXNpY2FsLmx5LHJlbGF5CiAgLSBET01BSU4tS0VZV09SRCx0aWt0b2sscmVsYXkKICAtIFBST0NFU1MtTkFNRSxjb20uemhpbGlhb2FwcC5tdXNpY2FsbHkscmVsYXkKCiAgLSBET01BSU4tU1VGRklYLGFrYW1haXplZC5uZXQscmVsYXkKICAtIERPTUFJTi1TVUZGSVgscmVjYXB0Y2hhLm5ldCxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxnc3RhdGljLmNvbSxyZWxheQogIC0gRE9NQUlOLVNVRkZJWCxnb29nbGUuY29tLHJlbGF5CiAgLSBET01BSU4tU1VGRklYLGZvbnRzLmdzdGF0aWMuY29tLHJlbGF5CgogIC0gTUFUQ0gscmVsYXk="
+        metadata:
+          source: "platform-ui"
+          description: "当前 amd64 默认镜像值由 Platform 下发，代理示例保留完整字段"
+      properties:
+        clientId:
+          type: string
+          example: "9060900010001"
+        name:
+          type: string
+          example: "TikTok 主账号环境"
+        rpaType:
+          type: string
+          example: "tiktok"
+          description: >
+            平台业务类型。Node Server 接受 tiktok/facebook/instagram/youtube/twitter 这类别名，
+            下发 Edge 前会归一化成 tk/fb/ins/yt/x/other。
+        runtime:
+          $ref: "#/components/schemas/CreateEnvRuntimeRequest"
+        environment:
+          $ref: "#/components/schemas/CreateEnvEnvironment"
+        proxy:
+          $ref: "#/components/schemas/CreateEnvProxyRequest"
+        fingerprint:
+          type: object
+          additionalProperties: true
+          description: 透传给 Edge 的指纹配置原始 JSON，Node Server 当前不解析、不保存 raw。
+          example:
+            platform: "Win32"
+            browserVersion: "136"
+        metadata:
+          $ref: "#/components/schemas/CreateEnvMetadataRequest"
+    ServerBrowserEnv:
+      type: object
+      description: >
+        Node Server 保存的环境包中心缓存。
+        它只保存归属、状态、连接入口和审计摘要，不保存 profile、代理明文、fingerprint raw 或 browser-data/profile。
+      properties:
+        envId:
+          type: string
+          example: "906090001_tiktok_1781223344556677888"
+        mainAccountId:
+          type: string
+          example: "906090001"
+        clientId:
+          type: string
+          example: "9060900010001"
+        rpaType:
+          type: string
+          example: "tiktok"
+        name:
+          type: string
+          example: "TikTok 主账号环境"
+        status:
+          type: string
+          enum: [created, running, stopped, backed_up, deleted, archived, error]
+          example: "created"
+        containerStatus:
+          type: string
+          example: "unknown"
+          description: Docker 运行摘要；创建后尚未 run 时保留 unknown。
+        monitorStatus:
+          type: string
+          example: "unknown"
+          description: 后台同步健康摘要；创建后尚未 run 时保留 unknown。
+        cdpUrl:
+          type: string
+          example: "http://192.168.10.119:8101"
+        webVncUrl:
+          type: string
+          example: "http://192.168.10.119:3300/web-vnc.html?envId=906090001_tiktok_1781223344556677888"
+        lastTaskId:
+          type: string
+          example: ""
+        lastError:
+          type: string
+          example: ""
+        createdByUserId:
+          type: string
+          example: "user_1780995561009325000_000001"
+        createdByUsername:
+          type: string
+          example: "user_906090001"
+        createdAt:
+          type: integer
+          example: 1781223344
+        updatedAt:
+          type: integer
+          example: 1781223344
+        deletedAt:
+          type: integer
+          example: 0
+    CreateEnvResponse:
+      type: object
+      description: 创建成功后的统一摘要，兼顾本次 Edge 返回值和中心缓存记录。
+      properties:
+        envId:
+          type: string
+          example: "906090001_tiktok_1781223344556677888"
+        mainAccountId:
+          type: string
+          example: "906090001"
+        clientId:
+          type: string
+          example: "9060900010001"
+        status:
+          type: string
+          example: "created"
+        ports:
+          $ref: "#/components/schemas/BrowserEnvPorts"
+        identityHash:
+          type: string
+          example: "d03ce5c0b53d7c5216f74b78c1f5f22f0f4b30fd53b7fe8f7756e2a16ebc9450"
+        cdpUrl:
+          type: string
+          example: "http://192.168.10.119:8101"
+        webVncUrl:
+          type: string
+          example: "http://192.168.10.119:3300/web-vnc.html?envId=906090001_tiktok_1781223344556677888"
+        createdAt:
+          type: integer
+          example: 1781223344
+        env:
+          $ref: "#/components/schemas/ServerBrowserEnv"
+    RunEnvRequest:
+      type: object
+      description: >
+        启动环境包的可选参数。第一版只开放 forceRecreate，
+        镜像、端口、挂载、代理正文和 browser-data/profile 都必须继续以环境包资产为准。
+      properties:
+        forceRecreate:
+          type: boolean
+          example: false
+    StopEnvRequest:
+      type: object
+      description: >
+        停止环境包的可选参数。timeoutSeconds 只是给浏览器写盘和优雅退出留缓冲时间，
+        不向平台前端暴露更多危险 Docker stop 细节。
+      properties:
+        timeoutSeconds:
+          type: integer
+          minimum: 1
+          example: 10
+    DockerImageRemoveItem:
+      type: object
+      properties:
+        image:
+          type: string
+          example: "crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64"
+        deleted:
+          type: string
+          example: "sha256:abc123"
+        untagged:
+          type: string
+          example: "crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64"
+    DeleteEnvImageResponse:
+      type: object
+      description: >
+        Node Server 代理 `/envs/:envId/del` 的同步结果。该动作只删除运行镜像，不销毁环境包资产。
+      properties:
+        envId:
+          type: string
+          example: "906090001_tiktok_1781223344556677888"
+        clientId:
+          type: string
+          example: "9060900010001"
+        image:
+          type: string
+          example: "crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64"
+        imageRemoved:
+          type: boolean
+          example: true
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/DockerImageRemoveItem"
+        warningMessage:
+          type: string
+          example: ""
+        deletedAt:
+          type: integer
+          example: 1781224455
+    ServerTask:
+      type: object
+      description: >
+        Node Server 的平台级任务事实。它把主账号、操作者、clientId、envId 和 edgeTaskId 串起来，
+        作为长期查询、审计和跨节点联调的中心任务记录。
+      properties:
+        taskId:
+          type: string
+          example: "task_1781223344556677888"
+        mainAccountId:
+          type: string
+          example: "906090001"
+        operatorUserId:
+          type: string
+          example: "user_1780995561009325000_000001"
+        operatorUsername:
+          type: string
+          example: "user_906090001"
+        clientId:
+          type: string
+          example: "9060900010001"
+        envId:
+          type: string
+          example: "906090001_tiktok_1781223344556677888"
+        type:
+          type: string
+          enum: [create_env, run_env, stop_env, pull_image, backup_env, delete_env_package]
+          example: "run_env"
+        status:
+          type: string
+          enum: [pending, running, success, failed, canceled]
+          example: "running"
+        edgeTaskId:
+          type: string
+          example: "task_1770000000000000000_12345"
+        eventsUrl:
+          type: string
+          description: 由当前 Node Server 请求 Host 生成的中心任务 SSE 地址。
+          example: "http://node-server.internal:3400/api/v1/server/tasks/task_1781223344556677888/events"
+        errorMessage:
+          type: string
+          example: ""
+        createdAt:
+          type: integer
+          example: 1781223344
+        updatedAt:
+          type: integer
+          example: 1781223345
+        finishedAt:
+          type: integer
+          example: 1781223352
+    EdgeTaskSnapshot:
+      type: object
+      description: 当前可读到的 Edge 短期任务快照，只做观察用途，不替代中心最终结论。
+      properties:
+        taskId:
+          type: string
+          example: "task_1770000000000000000_12345"
+        taskType:
+          type: string
+          example: "browser_env_run"
+        status:
+          type: string
+          example: "running"
+        message:
+          type: string
+          example: "浏览器容器创建完成，开始等待 CDP"
+        lastError:
+          type: string
+          example: ""
+        result:
+          type: object
+          nullable: true
+          additionalProperties: true
+          example:
+            envId: "906090001_tiktok_1781223344556677888"
+            status: "running"
+        createdAt:
+          type: integer
+          example: 1781223344
+        updatedAt:
+          type: integer
+          example: 1781223345
+        finishedAt:
+          type: integer
+          nullable: true
+          example: 1781223352
+    StartTaskResponse:
+      type: object
+      description: 长动作创建成功后的统一摘要；前端拿到 taskId 后继续查任务详情或订阅 SSE。
+      properties:
+        taskId:
+          type: string
+          example: "task_1781223344556677888"
+        taskType:
+          type: string
+          enum: [create_env, run_env, stop_env, pull_image, backup_env, delete_env_package]
+          example: "run_env"
+        status:
+          type: string
+          enum: [pending, running, success, failed, canceled]
+          example: "pending"
+        clientId:
+          type: string
+          example: "9060900010001"
+        envId:
+          type: string
+          example: "906090001_tiktok_1781223344556677888"
+        edgeTaskId:
+          type: string
+          example: "task_1770000000000000000_12345"
+        eventsUrl:
+          type: string
+          description: 由当前 Node Server 请求 Host 生成的中心任务 SSE 地址。
+          example: "http://node-server.internal:3400/api/v1/server/tasks/task_1781223344556677888/events"
+        message:
+          type: string
+          example: "环境包启动任务已创建"
+        createdAt:
+          type: integer
+          example: 1781223344
+    TaskDetailResponse:
+      type: object
+      properties:
+        task:
+          $ref: "#/components/schemas/ServerTask"
+        edge:
+          $ref: "#/components/schemas/EdgeTaskSnapshot"
+    ListEnvsData:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 1
+        page:
+          type: integer
+          example: 1
+        pageSize:
+          type: integer
+          example: 20
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ServerBrowserEnv"
+    ListTasksData:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 2
+        page:
+          type: integer
+          example: 1
+        pageSize:
+          type: integer
+          example: 20
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ServerTask"
+    CreateEnvUnifiedResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/CreateEnvResponse"
+    ListEnvsUnifiedResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/ListEnvsData"
+    ServerBrowserEnvUnifiedResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/ServerBrowserEnv"
+    StartTaskUnifiedResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/StartTaskResponse"
+    DeleteEnvImageUnifiedResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/DeleteEnvImageResponse"
+    TaskDetailUnifiedResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/TaskDetailResponse"
+    ListTasksUnifiedResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/ListTasksData"
+    NotImplementedResponse:
+      type: object
+      description: 路由已挂载，但当前版本尚未开放业务实现。
+      properties:
+        code:
+          type: integer
+          example: 1099
+        message:
+          type: string
+          example: "环境包启动接口已规划；实现前必须先查询 server_browser_envs 得到 clientId，再调用 EnsureClientReadyForBusiness 校验 healthy + verified + online"

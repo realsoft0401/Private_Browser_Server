@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Private Browser Node Server API</title>
+    <title>Private Browser Server Control API</title>
     <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
     <style>
       html,
@@ -18,9 +18,17 @@
     <div id="swagger-ui"></div>
     <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
     <script>
+      // Node Server 文档在联调时会频繁热更新；这里按页面加载时间追加一次查询串，
+      // 避免浏览器继续复用旧的 openapi.yaml 缓存。
+      function openapiSpecURL() {
+        var specURL = new URL("/openapi.yaml", window.location.origin);
+        specURL.searchParams.set("t", String(Date.now()));
+        return specURL.toString();
+      }
+
       function bootSwagger() {
         window.ui = SwaggerUIBundle({
-          url: "/openapi.yaml?v=node-0.1.1",
+          url: openapiSpecURL(),
           dom_id: "#swagger-ui",
           deepLinking: true,
           presets: [SwaggerUIBundle.presets.apis],
