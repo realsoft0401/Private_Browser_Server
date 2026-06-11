@@ -6,7 +6,8 @@ server:
   host: 0.0.0.0
   port: 3400
   read_timeout_seconds: 15
-  write_timeout_seconds: 15
+  # run 可能同步等待 Edge pull-image 终态，写超时必须覆盖长镜像拉取。
+  write_timeout_seconds: 720
 
 sqlite:
   path: /app/data/private_browser_server.db

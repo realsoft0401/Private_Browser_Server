@@ -89,6 +89,8 @@ func migrate(conn *sql.DB) error {
 			health_status TEXT NOT NULL DEFAULT 'stale',
 			discovery_status TEXT NOT NULL DEFAULT 'manual',
 			last_heartbeat_at INTEGER NOT NULL DEFAULT 0,
+			last_heartbeat_reported_at INTEGER NOT NULL DEFAULT 0,
+			last_heartbeat_source TEXT NOT NULL DEFAULT '',
 			last_checked_at INTEGER NOT NULL DEFAULT 0,
 			last_error TEXT NOT NULL DEFAULT '',
 			created_by_user_id TEXT NOT NULL DEFAULT '',

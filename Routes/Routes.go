@@ -50,6 +50,12 @@ func Setup() *gin.Engine {
 	auth.POST("/register", AuthService.RegisterUser)
 	auth.POST("/login", AuthService.LoginUser)
 	auth.GET("/me", AuthService.CurrentUser)
+	// Edge 正式 heartbeat 不是前端业务请求，而是 Client 节点主动上报中心心跳。
+	//
+	// 它不能依赖 Platform Header，因为 Client 不知道当前是谁在前端操作；
+	// 这里单独挂在 apiV1 下，只接收 discovery 域和 baseUrl/clientIp 这类非敏感摘要，
+	// 不让它复用业务组的 PlatformContext 中间件。
+	apiV1.POST("/server/edge-clients/heartbeat", NodeService.ReceiveHeartbeat)
 
 	business := apiV1.Group("")
 	business.Use(PlatformContext.Middleware())
@@ -61,6 +67,7 @@ func Setup() *gin.Engine {
 	edgeClients.GET("/discovered", NodeService.ListDiscoveredClients)
 	edgeClients.GET("/:clientId", NodeService.GetNodeDetail)
 	edgeClients.POST("/:clientId/device-info/refresh", NodeService.RefreshNodeDeviceInfo)
+	edgeClients.POST("/:clientId/verify", NodeService.VerifyNode)
 
 	envs := business.Group("/envs")
 	envs.POST("", EnvService.CreateEnv)
@@ -68,10 +75,11 @@ func Setup() *gin.Engine {
 	envs.GET("/:envId", EnvService.GetEnvDetail)
 	envs.POST("/:envId/run", EnvService.RunEnv)
 	envs.POST("/:envId/stop", EnvService.StopEnv)
+	envs.DELETE("/:envId/del", EnvService.DeleteEnvImage)
+	envs.DELETE("/:envId/package", EnvService.DeleteEnvPackage)
 
 	server := business.Group("/server")
 	server.GET("/dashboard", DashboardService.GetDashboard)
-	server.POST("/edge-clients/heartbeat", NodeService.ReceiveHeartbeat)
 	server.GET("/tasks", TaskService.ListTasks)
 	server.GET("/tasks/:taskId", TaskService.GetTask)
 	server.GET("/tasks/:taskId/events", TaskService.StreamTaskEvents)

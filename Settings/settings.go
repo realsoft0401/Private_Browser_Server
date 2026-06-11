@@ -94,13 +94,15 @@ type TaskConfig struct {
 // 设计来源：Client 会在独立内网广播本机 Edge 服务入口；Server 监听后只能把它当“发现线索”，
 // 仍必须再做 /health、/api/v1/edge/device-info、Docker 2375 和架构归一化，不能直接进入 verified。
 type DiscoveryConfig struct {
-	Enabled         bool   `mapstructure:"enabled"`
-	ListenAddress   string `mapstructure:"listen_address"`
-	Port            int    `mapstructure:"port"`
-	Magic           string `mapstructure:"magic"`
-	ProtocolVersion int    `mapstructure:"protocol_version"`
-	Group           string `mapstructure:"group"`
-	MaxPacketBytes  int    `mapstructure:"max_packet_bytes"`
+	Enabled             bool   `mapstructure:"enabled"`
+	ListenAddress       string `mapstructure:"listen_address"`
+	Port                int    `mapstructure:"port"`
+	Magic               string `mapstructure:"magic"`
+	ProtocolVersion     int    `mapstructure:"protocol_version"`
+	Group               string `mapstructure:"group"`
+	MaxPacketBytes      int    `mapstructure:"max_packet_bytes"`
+	StaleAfterSeconds   int    `mapstructure:"stale_after_seconds"`
+	OfflineAfterSeconds int    `mapstructure:"offline_after_seconds"`
 }
 
 // Init 加载当前环境配置文件。
@@ -143,7 +145,9 @@ func setDefaults(env string) {
 	configEngine.SetDefault("server.host", "0.0.0.0")
 	configEngine.SetDefault("server.port", 3400)
 	configEngine.SetDefault("server.read_timeout_seconds", 15)
-	configEngine.SetDefault("server.write_timeout_seconds", 15)
+	// Node Server 的 run 现在可能在同一请求里同步等待 Edge pull-image 终态，
+	// 因此写超时不能继续维持 15 秒，否则会出现任务已经落库 failed，但 HTTP 响应先被服务端切断的假象。
+	configEngine.SetDefault("server.write_timeout_seconds", 720)
 	configEngine.SetDefault("sqlite.path", "data/private_browser_server.db")
 	configEngine.SetDefault("sqlite.max_open_conns", 1)
 	configEngine.SetDefault("sqlite.max_idle_conns", 1)
@@ -162,6 +166,8 @@ func setDefaults(env string) {
 	configEngine.SetDefault("discovery.protocol_version", 1)
 	configEngine.SetDefault("discovery.group", "default")
 	configEngine.SetDefault("discovery.max_packet_bytes", 8192)
+	configEngine.SetDefault("discovery.stale_after_seconds", 30)
+	configEngine.SetDefault("discovery.offline_after_seconds", 90)
 }
 
 // normalizeConfig 补齐指针配置并收敛不合理值。
@@ -202,6 +208,9 @@ func normalizeConfig(projectRoot, configFile, env string, config *AppConfig) {
 	if config.EdgeConfig.RequestTimeoutSeconds <= 0 {
 		config.EdgeConfig.RequestTimeoutSeconds = 20
 	}
+	if config.ServerConfig.WriteTimeoutSeconds <= 0 {
+		config.ServerConfig.WriteTimeoutSeconds = 720
+	}
 	if config.EdgeConfig.RetryTimes < 0 {
 		config.EdgeConfig.RetryTimes = 0
 	}
@@ -235,6 +244,15 @@ func normalizeDiscoveryConfig(config *DiscoveryConfig) {
 	}
 	if config.MaxPacketBytes <= 0 || config.MaxPacketBytes > 65535 {
 		config.MaxPacketBytes = 8192
+	}
+	if config.StaleAfterSeconds <= 0 {
+		config.StaleAfterSeconds = 30
+	}
+	if config.OfflineAfterSeconds <= 0 {
+		config.OfflineAfterSeconds = 90
+	}
+	if config.OfflineAfterSeconds < config.StaleAfterSeconds {
+		config.OfflineAfterSeconds = config.StaleAfterSeconds * 3
 	}
 }
 

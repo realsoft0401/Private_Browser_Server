@@ -6,7 +6,8 @@ server:
   host: 127.0.0.1
   port: 3400
   read_timeout_seconds: 10
-  write_timeout_seconds: 10
+  # 测试环境同样需要覆盖同步镜像预检，否则长 pull-image 会提前断响应。
+  write_timeout_seconds: 720
 
 sqlite:
   path: data/private_browser_server_test.db

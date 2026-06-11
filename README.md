@@ -94,12 +94,14 @@ POST /api/v1/edge/browser-envs/:envId/backup
 POST /api/v1/edge/browser-envs/:envId/restore
 POST /api/v1/edge/browser-envs/:envId/revalidate
 POST /api/v1/edge/browser-envs/import-package
-DELETE /api/v1/edge/browser-envs/:envId
+DELETE /api/v1/edge/browser-envs/:envId/del
+DELETE /api/v1/edge/browser-envs/:envId/package
 GET  /api/v1/edge/tasks/:taskId
 GET  /api/v1/edge/tasks/:taskId/events
 ```
 
 Server 不直接读写 Edge 的 SQLite、Docker socket、环境包目录或 browser-data。
+后续 NodeServer 下发删除类动作时，`/del` 只允许作为运行镜像清理入口，`/package` 才是彻底销毁环境包资产入口；根路径 `DELETE /api/v1/edge/browser-envs/:envId` 不作为新开发接口。
 
 RPA / CDP 操作同样遵守这个边界：Server 可以保存和下发受控操作步骤、参数和任务元数据，但不能直接读取或保存 Cookies、Local Storage、IndexedDB、Session Storage、Login Data、proxy 明文、fingerprint raw 或 `browser-data/profile`。
 

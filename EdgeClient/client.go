@@ -94,6 +94,52 @@ type EdgeTask struct {
 	FinishedAt   *int64          `json:"finishedAt,omitempty"`
 }
 
+// DockerImage 是 Node Server 读取到的 Edge 本机 Docker 镜像摘要。
+//
+// 设计来源：
+// - Edge run 明确要求镜像必须先存在，本机缺镜像时会直接失败；
+// - 用户要求 Node Server 在 run 前先检查镜像是否已拉取，必要时主动调用 pull-image；
+// - 因此这里复用 Edge `/api/v1/edge/docker/images` 的稳定摘要，而不是让业务层猜 Docker 原始字段。
+type DockerImage struct {
+	ID          string   `json:"id"`
+	RepoTags    []string `json:"repoTags"`
+	RepoDigests []string `json:"repoDigests"`
+	Created     int64    `json:"created"`
+	Size        int64    `json:"size"`
+	VirtualSize int64    `json:"virtualSize"`
+	SharedSize  int64    `json:"sharedSize"`
+	Containers  int64    `json:"containers"`
+}
+
+// PullImageRequest 是 Node Server 发给 Edge pull-image 的最小请求体。
+//
+// 镜像选择权仍然在 Server；这里只负责把受控镜像引用转发给 Edge 本机 Docker。
+type PullImageRequest struct {
+	Image string `json:"image"`
+	Tag   string `json:"tag,omitempty"`
+}
+
+// DeleteBrowserEnvImageResponse 是 Edge `/browser-envs/:envId/del` 的同步响应摘要。
+//
+// 设计来源：
+// - `/del` 只删除运行镜像，不创建 Edge task；
+// - Node Server 需要稳定读取 imageRemoved/results/warningMessage，给前端明确区分“成功删除”和“Docker 拒绝删除”；
+// - 这里只保留协议层稳定字段，不复制 Edge 内部更细的 Docker 模型。
+type DeleteBrowserEnvImageResponse struct {
+	EnvID          string                    `json:"envId"`
+	Image          string                    `json:"image"`
+	ImageRemoved   bool                      `json:"imageRemoved"`
+	Results        []DockerImageRemoveResult `json:"results,omitempty"`
+	WarningMessage string                    `json:"warningMessage,omitempty"`
+	DeletedAt      int64                     `json:"deletedAt"`
+}
+
+type DockerImageRemoveResult struct {
+	Image    string `json:"image"`
+	Deleted  string `json:"deleted,omitempty"`
+	Untagged string `json:"untagged,omitempty"`
+}
+
 // DoJSON 发送一次 JSON 请求并解析 Edge 统一响应。
 //
 // body 为 nil 时不发送请求体；target 必须是指针或 nil。这个函数不做任何自动重试，
@@ -192,6 +238,34 @@ func (c *Client) RevalidateBrowserEnvTask(ctx context.Context, baseURL string, a
 func (c *Client) GetEdgeTask(ctx context.Context, baseURL string, apiKey string, edgeTaskID string) (*EdgeTask, error) {
 	var result EdgeTask
 	err := c.DoJSON(ctx, baseURL, http.MethodGet, "/api/v1/edge/tasks/"+url.PathEscape(edgeTaskID), apiKey, nil, &result)
+	return &result, err
+}
+
+// GetDockerImages 读取 Edge 本机 Docker 镜像列表。
+func (c *Client) GetDockerImages(ctx context.Context, baseURL string, apiKey string) ([]DockerImage, error) {
+	var result []DockerImage
+	err := c.DoJSON(ctx, baseURL, http.MethodGet, "/api/v1/edge/docker/images", apiKey, nil, &result)
+	return result, err
+}
+
+// PullDockerImageTask 调用 Edge pull-image 并返回 Edge taskId。
+func (c *Client) PullDockerImageTask(ctx context.Context, baseURL string, apiKey string, body *PullImageRequest) (*TaskStartResponse, error) {
+	var result TaskStartResponse
+	err := c.DoJSON(ctx, baseURL, http.MethodPost, "/api/v1/edge/docker/pull-image", apiKey, body, &result)
+	return &result, err
+}
+
+// DeleteBrowserEnvPackageTask 调用 Edge `/package` 并返回 Edge taskId。
+func (c *Client) DeleteBrowserEnvPackageTask(ctx context.Context, baseURL string, apiKey string, envID string) (*TaskStartResponse, error) {
+	var result TaskStartResponse
+	err := c.DoJSON(ctx, baseURL, http.MethodDelete, "/api/v1/edge/browser-envs/"+url.PathEscape(envID)+"/package", apiKey, nil, &result)
+	return &result, err
+}
+
+// DeleteBrowserEnvImage 调用 Edge `/del` 删除环境包关联运行镜像。
+func (c *Client) DeleteBrowserEnvImage(ctx context.Context, baseURL string, apiKey string, envID string) (*DeleteBrowserEnvImageResponse, error) {
+	var result DeleteBrowserEnvImageResponse
+	err := c.DoJSON(ctx, baseURL, http.MethodDelete, "/api/v1/edge/browser-envs/"+url.PathEscape(envID)+"/del", apiKey, nil, &result)
 	return &result, err
 }
 

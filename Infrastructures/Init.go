@@ -78,7 +78,8 @@ func buildServerOptions() serverOptions {
 		options.readTimeout = 15 * time.Second
 	}
 	if options.writeTimeout <= 0 {
-		options.writeTimeout = 15 * time.Second
+		// run 入口可能同步等待 Edge pull-image 完成，写超时必须明显大于普通短请求。
+		options.writeTimeout = 12 * time.Minute
 	}
 	return options
 }

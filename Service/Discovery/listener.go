@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	NodeRepo "private_browser_server/Repository/Node"
 	"private_browser_server/Settings"
 )
 
@@ -196,6 +197,30 @@ func (l *Listener) handlePacket(addr net.Addr, data []byte) {
 	item.DiscardReason = ""
 	l.clients[key] = item
 	l.mu.Unlock()
+	l.syncRegisteredHeartbeat(sourceIP, payload, now)
+}
+
+// syncRegisteredHeartbeat 在 UDP 收包时实时回写已注册 Edge Client 的最后心跳。
+//
+// 这一步只更新心跳事实，不创建 Client、不改变 healthStatus、不把 discoveryStatus 改成 verified；
+// 其中 last_heartbeat_at 记录的是 Node Server 实际收到报文的时间，last_heartbeat_reported_at
+// 记录的是 Client 自报时间。这样既能保持 heartbeatStatus 的中心判断准确，也能保留排障所需的时钟偏差线索。
+func (l *Listener) syncRegisteredHeartbeat(sourceIP string, payload BeaconPayload, fallbackAt int64) {
+	receivedAt := fallbackAt
+	reportedAt := payload.LastHeartbeatAt
+	if reportedAt <= 0 {
+		reportedAt = fallbackAt
+	}
+	if err := (NodeRepo.Repository{}).UpdateHeartbeatByDiscovery(
+		context.Background(),
+		payload.BaseURL,
+		payload.ClientIP,
+		sourceIP,
+		receivedAt,
+		reportedAt,
+	); err != nil {
+		log.Printf("udp discovery heartbeat sync failed, sourceIp=%s, baseUrl=%s, err=%v\n", sourceIP, payload.BaseURL, err)
+	}
 }
 
 func (l *Listener) validate(payload BeaconPayload) string {

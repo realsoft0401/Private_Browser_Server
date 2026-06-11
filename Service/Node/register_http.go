@@ -1,13 +1,7 @@
 package Node
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -19,53 +13,7 @@ import (
 	"private_browser_server/Pkg/HttpResponse"
 	NodeRepo "private_browser_server/Repository/Node"
 	DiscoveryService "private_browser_server/Service/Discovery"
-	"private_browser_server/Settings"
 )
-
-type registerNodeRequest struct {
-	Name         string `json:"name"`
-	BaseURL      string `json:"baseUrl"`
-	ClientIP     string `json:"clientIp"`
-	DockerAPIURL string `json:"dockerApiUrl"`
-}
-
-type probeDockerRequest struct {
-	DockerAPIURL string `json:"dockerApiUrl"`
-}
-
-type dockerProbeResult struct {
-	Reachable        bool   `json:"reachable"`
-	DockerAPIURL     string `json:"dockerApiUrl"`
-	OS               string `json:"os"`
-	Arch             string `json:"arch"`
-	RawArch          string `json:"rawArch"`
-	CPUCores         int    `json:"cpuCores"`
-	MemoryTotalMB    int64  `json:"memoryTotalMb"`
-	DockerVersion    string `json:"dockerVersion"`
-	DockerAPIVersion string `json:"dockerApiVersion"`
-	Containers       int    `json:"containers"`
-	Images           int    `json:"images"`
-	CheckedAt        int64  `json:"checkedAt"`
-	Troubleshooting  string `json:"troubleshooting,omitempty"`
-}
-
-type dockerInfoResponse struct {
-	OperatingSystem string `json:"OperatingSystem"`
-	OSType          string `json:"OSType"`
-	Architecture    string `json:"Architecture"`
-	NCPU            int    `json:"NCPU"`
-	MemTotal        int64  `json:"MemTotal"`
-	ServerVersion   string `json:"ServerVersion"`
-	Containers      int    `json:"Containers"`
-	Images          int    `json:"Images"`
-}
-
-type dockerVersionResponse struct {
-	Version    string `json:"Version"`
-	APIVersion string `json:"ApiVersion"`
-	OS         string `json:"Os"`
-	Arch       string `json:"Arch"`
-}
 
 // ProbeDocker 通过 Docker Engine HTTP API 探测节点能力。
 //
@@ -122,7 +70,7 @@ func RegisterNode(ctx *gin.Context) {
 		return
 	}
 	now := time.Now().Unix()
-	node := &NodeModel.ControlNode{
+	node := &NodeModel.EdgeClient{
 		ID:                newClientID(platformCtx.MainAccountID, sequence),
 		MainAccountID:     platformCtx.MainAccountID,
 		NodeSequence:      sequence,
@@ -149,6 +97,7 @@ func RegisterNode(ctx *gin.Context) {
 		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeServerBusy, "注册节点失败: "+err.Error())
 		return
 	}
+	attachHeartbeatStatus(node, time.Now().Unix())
 	HttpResponse.ResponseSuccess(ctx, node)
 }
 
@@ -164,6 +113,7 @@ func ListNodes(ctx *gin.Context) {
 		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeServerBusy, "查询节点列表失败: "+err.Error())
 		return
 	}
+	attachHeartbeatStatusList(nodes, time.Now().Unix())
 	HttpResponse.ResponseSuccess(ctx, gin.H{"items": nodes, "total": len(nodes)})
 }
 
@@ -172,9 +122,24 @@ func ListNodes(ctx *gin.Context) {
 // 这是自动发现的测试入口：只展示发现线索，不创建节点、不标记 verified。
 // 管理员确认后仍应走注册/刷新流程，完成 Client HTTP 和 Docker 2375 探测。
 func ListDiscoveredClients(ctx *gin.Context) {
+	platformCtx, ok := PlatformContext.FromGin(ctx)
+	if !ok {
+		HttpResponse.ResponseError(ctx, HttpResponse.CodeUnauthorized)
+		return
+	}
 	listener := DiscoveryService.Current()
 	items := listener.List(ctx.Request.Context())
-	HttpResponse.ResponseSuccess(ctx, gin.H{"items": items, "total": len(items)})
+	nodes, err := (NodeRepo.Repository{}).ListByMainAccount(ctx.Request.Context(), platformCtx.MainAccountID)
+	if err != nil {
+		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeServerBusy, "查询已注册 Edge Client 失败: "+err.Error())
+		return
+	}
+	views := attachClientIDToDiscovered(items, nodes)
+	if err = syncDiscoveredHeartbeats(ctx.Request.Context(), platformCtx.MainAccountID, views); err != nil {
+		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeServerBusy, "回写 Client UDP 心跳失败: "+err.Error())
+		return
+	}
+	HttpResponse.ResponseSuccess(ctx, gin.H{"items": views, "total": len(views)})
 }
 
 // GetNodeDetail 返回 Edge Client 详情。
@@ -193,6 +158,7 @@ func GetNodeDetail(ctx *gin.Context) {
 		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeServerBusy, "查询 Edge Client 详情失败: "+err.Error())
 		return
 	}
+	attachHeartbeatStatus(node, time.Now().Unix())
 	HttpResponse.ResponseSuccess(ctx, node)
 }
 
@@ -244,133 +210,6 @@ func RefreshNodeDeviceInfo(ctx *gin.Context) {
 		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeServerBusy, "保存节点设备信息失败: "+err.Error())
 		return
 	}
+	attachHeartbeatStatus(node, time.Now().Unix())
 	HttpResponse.ResponseSuccess(ctx, gin.H{"node": node, "probe": probe})
-}
-
-// ReceiveHeartbeat 接收 Edge 心跳。
-//
-// 心跳只保存节点、Docker、环境包状态摘要，不接收 proxy 明文、fingerprint raw 或 browser-data。
-func ReceiveHeartbeat(ctx *gin.Context) {
-	HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeNotImplemented, "节点心跳接口已规划，下一阶段接入状态摘要落库；心跳不得携带 proxy 明文、fingerprint raw 或 browser-data")
-}
-
-func probeDocker(parent context.Context, dockerAPIURL string) (*dockerProbeResult, error) {
-	baseURL, err := normalizeHTTPURL(dockerAPIURL)
-	if err != nil {
-		return nil, fmt.Errorf("Docker API 地址非法: %w；需要形如 http://192.168.10.119:2375，且 Docker 2375 只能暴露在可信内网", err)
-	}
-	timeout := time.Duration(Settings.Conf.EdgeConfig.RequestTimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = 20 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-
-	client := &http.Client{Timeout: timeout}
-	if err = dockerPing(ctx, client, baseURL); err != nil {
-		return nil, err
-	}
-	info, err := dockerGetJSON[dockerInfoResponse](ctx, client, baseURL, "/info")
-	if err != nil {
-		return nil, err
-	}
-	version, err := dockerGetJSON[dockerVersionResponse](ctx, client, baseURL, "/version")
-	if err != nil {
-		return nil, err
-	}
-	rawArch := firstNonEmpty(info.Architecture, version.Arch)
-	return &dockerProbeResult{
-		Reachable:        true,
-		DockerAPIURL:     baseURL,
-		OS:               firstNonEmpty(info.OperatingSystem, info.OSType, version.OS),
-		Arch:             normalizeArch(rawArch),
-		RawArch:          rawArch,
-		CPUCores:         info.NCPU,
-		MemoryTotalMB:    info.MemTotal / 1024 / 1024,
-		DockerVersion:    firstNonEmpty(info.ServerVersion, version.Version),
-		DockerAPIVersion: version.APIVersion,
-		Containers:       info.Containers,
-		Images:           info.Images,
-		CheckedAt:        time.Now().Unix(),
-	}, nil
-}
-
-func dockerPing(ctx context.Context, client *http.Client, baseURL string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/_ping", nil)
-	if err != nil {
-		return fmt.Errorf("创建 Docker _ping 请求失败: %w", err)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("Docker 2375 不可达: %w；影响范围：Node Server 无法确认节点 Docker 能力，不能安全下发浏览器容器动作；修复方式：确认 Docker daemon 已开启 tcp://0.0.0.0:2375 且仅限可信内网访问", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("Docker _ping 返回 HTTP %d；请检查 Docker 2375、防火墙和 daemon 配置", resp.StatusCode)
-	}
-	return nil
-}
-
-func dockerGetJSON[T any](ctx context.Context, client *http.Client, baseURL string, path string) (T, error) {
-	var target T
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
-	if err != nil {
-		return target, fmt.Errorf("创建 Docker %s 请求失败: %w", path, err)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return target, fmt.Errorf("请求 Docker %s 失败: %w；请检查 Docker 2375 是否只在可信内网开放，且当前 Node Server 可以访问", path, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return target, fmt.Errorf("读取 Docker %s 响应失败: %w", path, err)
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return target, fmt.Errorf("Docker %s 返回 HTTP %d body=%s", path, resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	if err = json.Unmarshal(body, &target); err != nil {
-		return target, fmt.Errorf("解析 Docker %s JSON 失败: %w", path, err)
-	}
-	return target, nil
-}
-
-func normalizeHTTPURL(value string) (string, error) {
-	value = strings.TrimRight(strings.TrimSpace(value), "/")
-	if value == "" {
-		return "", fmt.Errorf("不能为空")
-	}
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("必须包含 http/https scheme 和 host")
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("只支持 http 或 https")
-	}
-	return value, nil
-}
-
-func normalizeArch(value string) string {
-	arch := strings.ToLower(strings.TrimSpace(value))
-	switch arch {
-	case "amd64", "x86_64":
-		return NodeModel.NodeArchAMD64
-	case "arm64", "aarch64", "armv8":
-		return NodeModel.NodeArchARM64
-	default:
-		return NodeModel.NodeArchUnknown
-	}
-}
-
-func newClientID(mainAccountID string, sequence int) string {
-	return strings.TrimSpace(mainAccountID) + fmt.Sprintf("%04d", sequence)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
