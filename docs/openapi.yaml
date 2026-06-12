@@ -265,8 +265,10 @@ paths:
       tags: [Edge Clients]
       summary: 探测并刷新节点设备能力
       description: >
-        通过目标 Edge 的 /health、/api/v1/edge/device-info 和 Docker 2375 能力探测刷新中心缓存，
-        用于补齐 os、arch、dockerVersion、镜像/容器统计和基础健康摘要。
+        通过目标节点的 Docker 2375 能力探测刷新中心缓存，
+        用于补齐 os、arch、dockerVersion、镜像/容器统计和基础设备摘要。
+        当前实现不会主动调用目标 Edge 的 /health 或 /api/v1/edge/device-info，
+        也不会因为刷新成功就自动把节点提升为 verified。
       parameters:
         - name: clientId
           in: path
@@ -604,12 +606,12 @@ paths:
           in: query
           schema:
             type: string
-          example: "906090001_tiktok_1781223344556677888"
+          example: "906090001_tk_1781223344556677888"
         - name: type
           in: query
           schema:
             type: string
-            enum: [create_env, run_env, stop_env, pull_image, backup_env]
+            enum: [create_env, run_env, stop_env, pull_image, backup_env, delete_env_package]
           example: "run_env"
         - name: status
           in: query
@@ -719,8 +721,8 @@ components:
       required: true
       schema:
         type: string
-      example: "906090001_tiktok_1781223344556677888"
-      description: 环境包 ID，由 mainAccountId 作为 userId 参与生成，保证资产归属稳定。
+      example: "906090001_tk_1781223344556677888"
+      description: 环境包 ID，第一段固定取主账号 mainAccountId，业务类型段使用 Edge 短码（如 tk/fb/ins/yt/x）。
     TaskId:
       name: taskId
       in: path
@@ -1001,13 +1003,13 @@ components:
         data:
           type: object
           properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/DiscoveredClient"
             total:
               type: integer
               example: 2
-              items:
-                type: array
-                items:
-                  $ref: "#/components/schemas/DiscoveredClient"
     HeartbeatResponse:
       type: object
       description: >
@@ -1184,7 +1186,7 @@ components:
       description: >
         普通前端或用户不应随意拼装镜像字符串；imagePolicy 应由 Platform 或中心管理服务受控下发。
         当前过渡阶段，Platform 先直接给出已登记镜像字符串；Node Server 仍会校验该值是否属于受控策略。
-        imagePolicy 为空时按默认稳定策略处理；当前 verified amd64 节点默认会解析到
+        imagePolicy 传空字符串或 stable 时按默认稳定策略处理；当前 verified amd64 节点默认会解析到
         crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64。
       properties:
         imagePolicy:
@@ -1262,8 +1264,8 @@ components:
         真正发给 Edge 的 userId 固定取 X-Main-Account-Id，避免子账号把 envId 第一段变成错误归属。
         rpaType 支持传 tiktok/facebook/instagram/youtube/twitter 这类业务别名，Node Server 会在下发 Edge 前归一化成 tk/fb/ins/yt/x。
         当前 Swagger 示例按 verified amd64 节点准备，imagePolicy 由 Platform 受控给出；
-        过渡阶段该值先直接传已登记镜像字符串，Node Server 校验通过后会下发同一条 runtime.image。
-        crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64。
+        过渡阶段该值先直接传已登记镜像字符串，Node Server 校验通过后会下发同一条 runtime.image，
+        当前 amd64 稳定值为 crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64。
       example:
         clientId: "9060900010001"
         name: "TikTok 主账号环境"
@@ -1299,7 +1301,7 @@ components:
           example: "tiktok"
           description: >
             平台业务类型。Node Server 接受 tiktok/facebook/instagram/youtube/twitter 这类别名，
-            下发 Edge 前会归一化成 tk/fb/ins/yt/x/other。
+            下发 Edge 前会归一化成 tk/fb/ins/yt/x/other；真正返回到列表/详情里的通常是归一化后的短码。
         runtime:
           $ref: "#/components/schemas/CreateEnvRuntimeRequest"
         environment:
@@ -1323,7 +1325,7 @@ components:
       properties:
         envId:
           type: string
-          example: "906090001_tiktok_1781223344556677888"
+          example: "906090001_tk_1781223344556677888"
         mainAccountId:
           type: string
           example: "906090001"
@@ -1332,7 +1334,7 @@ components:
           example: "9060900010001"
         rpaType:
           type: string
-          example: "tiktok"
+          example: "tk"
         name:
           type: string
           example: "TikTok 主账号环境"
@@ -1353,7 +1355,7 @@ components:
           example: "http://192.168.10.119:8101"
         webVncUrl:
           type: string
-          example: "http://192.168.10.119:3300/web-vnc.html?envId=906090001_tiktok_1781223344556677888"
+          example: "http://192.168.10.119:3300/web-vnc.html?envId=906090001_tk_1781223344556677888"
         lastTaskId:
           type: string
           example: ""
@@ -1381,7 +1383,7 @@ components:
       properties:
         envId:
           type: string
-          example: "906090001_tiktok_1781223344556677888"
+          example: "906090001_tk_1781223344556677888"
         mainAccountId:
           type: string
           example: "906090001"
@@ -1401,7 +1403,7 @@ components:
           example: "http://192.168.10.119:8101"
         webVncUrl:
           type: string
-          example: "http://192.168.10.119:3300/web-vnc.html?envId=906090001_tiktok_1781223344556677888"
+          example: "http://192.168.10.119:3300/web-vnc.html?envId=906090001_tk_1781223344556677888"
         createdAt:
           type: integer
           example: 1781223344
@@ -1445,7 +1447,7 @@ components:
       properties:
         envId:
           type: string
-          example: "906090001_tiktok_1781223344556677888"
+          example: "906090001_tk_1781223344556677888"
         clientId:
           type: string
           example: "9060900010001"
@@ -1488,15 +1490,20 @@ components:
           example: "9060900010001"
         envId:
           type: string
-          example: "906090001_tiktok_1781223344556677888"
+          example: "906090001_tk_1781223344556677888"
         type:
           type: string
           enum: [create_env, run_env, stop_env, pull_image, backup_env, delete_env_package]
           example: "run_env"
+          description: >
+            当前已落库任务类型。backup_env 已为后续接口预留常量；现阶段真正会写入的主要是
+            create_env、run_env、stop_env、delete_env_package，run 过程中镜像预检还可能产生 pull_image 子任务。
         status:
           type: string
           enum: [pending, running, success, failed, canceled]
           example: "running"
+          description: >
+            当前实现实际会写入 pending/running/success/failed；canceled 先保留为后续扩展枚举。
         edgeTaskId:
           type: string
           example: "task_1770000000000000000_12345"
@@ -1540,7 +1547,7 @@ components:
           nullable: true
           additionalProperties: true
           example:
-            envId: "906090001_tiktok_1781223344556677888"
+            envId: "906090001_tk_1781223344556677888"
             status: "running"
         createdAt:
           type: integer
@@ -1563,16 +1570,18 @@ components:
           type: string
           enum: [create_env, run_env, stop_env, pull_image, backup_env, delete_env_package]
           example: "run_env"
+          description: 返回给前端的启动任务类型字段；对应持久化任务详情里的 `task.type`。
         status:
           type: string
           enum: [pending, running, success, failed, canceled]
           example: "pending"
+          description: 长动作创建时通常先返回 pending；最终结果需继续查询 task detail 或订阅 SSE。
         clientId:
           type: string
           example: "9060900010001"
         envId:
           type: string
-          example: "906090001_tiktok_1781223344556677888"
+          example: "906090001_tk_1781223344556677888"
         edgeTaskId:
           type: string
           example: "task_1770000000000000000_12345"
@@ -1711,4 +1720,4 @@ components:
           example: 1099
         message:
           type: string
-          example: "环境包启动接口已规划；实现前必须先查询 server_browser_envs 得到 clientId，再调用 EnsureClientReadyForBusiness 校验 healthy + verified + online"
+          example: "接口已规划，当前版本尚未开放；请参考逐接口设计文档确认后续实现边界"

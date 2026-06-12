@@ -73,6 +73,29 @@ Interfaces / Routes
 - 切割时优先按职责边界拆分，例如 `http` 入口、请求校验、任务编排、外部调用、错误映射、类型定义分开。
 - 新增功能如果会把文件推到 `900` 行以上，必须先拆文件再继续写，不允许“先写完再说”。
 
+## 接口文档沉淀规则
+
+- `Private_Browser_Server` 已建立逐接口文档目录：`docs/api/`。
+- 后续新增或正式推进的中心接口，除了更新 `docs/openapi.yaml` 外，还必须在 `docs/api/` 下新增对应 Markdown 文档，采用“一接口一文件”方式，例如：
+  - `docs/api/backup.md`
+  - `docs/api/restore.md`
+  - `docs/api/revalidate.md`
+  - `docs/api/import-package.md`
+- 这些逐接口文档是给开发、联调、实施、管理员和后续企业级 API 对接直接阅读的，不要只把关键信息埋在 `task0609-node-server.md`、`task0611.md` 或 `openapi.yaml` 里。
+- `docs/api/*.md` 至少应包含：
+  - 功能目标
+  - 业务边界
+  - 请求与响应
+  - 前置校验
+  - 状态流转
+  - 任务编排
+  - 成功判定
+  - 失败判定
+  - 日志字段
+  - 联调验收标准
+- 逐接口 Markdown 文档要重点补足 OpenAPI 不擅长表达的内容，例如设计来源、为什么这样做、哪些状态禁止调用、Edge task 丢失后如何收口、管理员看到错误后怎么处理。
+- `docs/openapi.yaml` 继续作为协议事实源；`docs/api/*.md` 负责把协议背后的业务语义、状态机、排障方式讲清楚，两者必须同步维护，不能一边更新一边遗忘。
+
 ## V1 暂缓能力
 
 - 自动跨节点迁移：放到 V1.1。
