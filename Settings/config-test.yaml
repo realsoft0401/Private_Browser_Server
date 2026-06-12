@@ -10,7 +10,7 @@ server:
   write_timeout_seconds: 720
 
 sqlite:
-  path: data/private_browser_server_test.db
+  path: data/private_browser_server.db
   max_open_conns: 1
   max_idle_conns: 1
 

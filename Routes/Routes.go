@@ -72,9 +72,13 @@ func Setup() *gin.Engine {
 	envs := business.Group("/envs")
 	envs.POST("", EnvService.CreateEnv)
 	envs.GET("", EnvService.ListEnvs)
+	envs.POST("/import-package", EnvService.ImportEnvPackage)
 	envs.GET("/:envId", EnvService.GetEnvDetail)
 	envs.POST("/:envId/run", EnvService.RunEnv)
 	envs.POST("/:envId/stop", EnvService.StopEnv)
+	envs.POST("/:envId/backup", EnvService.BackupEnv)
+	envs.POST("/:envId/restore", EnvService.RestoreEnv)
+	envs.POST("/:envId/revalidate", EnvService.RevalidateEnv)
 	envs.DELETE("/:envId/del", EnvService.DeleteEnvImage)
 	envs.DELETE("/:envId/package", EnvService.DeleteEnvPackage)
 

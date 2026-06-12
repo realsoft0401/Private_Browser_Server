@@ -12,6 +12,7 @@ import (
 )
 
 var ErrEnvNotFound = errors.New("server browser env not found")
+var ErrEnvConflict = errors.New("server browser env conflict")
 
 // Repository 是 server_browser_envs 表的底层访问入口。
 //
@@ -44,6 +45,60 @@ func (Repository) Create(ctx context.Context, env *model.ServerBrowserEnv) error
 	)
 	if err != nil {
 		return fmt.Errorf("insert server_browser_envs failed: %w", err)
+	}
+	return nil
+}
+
+// CreateOrReviveDeleted 在“全新写入”与“复活 deleted tombstone”之间做受控收口。
+//
+// 设计来源：
+// - 用户要求 `/package` 删除后，中心层仍保留一条 status=deleted 的聚合历史，方便审计和排障；
+// - 实测又证明 import-package 需要允许“同节点 deleted 后重新导入同一个 envId”，否则中心 tombstone 会反向阻塞真实恢复；
+// - 因此这里明确只允许两种情况成功：记录不存在时创建，或现有记录 status=deleted 且 clientId/mainAccountId 仍匹配时复活。
+//
+// 职责边界：
+// - 只处理 SQLite 的插入或复活，不判断导入包是否合法，也不决定是否允许跨节点迁移；
+// - 如果同 envId 仍处于 created/running/backed_up/error 等活跃态，或 deleted 记录已经绑定到别的 client，则直接返回冲突；
+// - 这里会同步覆盖 createdBy/createdAt，表示这次 import-package 在中心层重新建立了可运行资产摘要。
+func (Repository) CreateOrReviveDeleted(ctx context.Context, env *model.ServerBrowserEnv) error {
+	if env == nil {
+		return fmt.Errorf("server browser env 不能为空")
+	}
+	result, err := Rom.DB().ExecContext(ctx, `INSERT INTO server_browser_envs (
+		env_id, main_account_id, client_id, rpa_type, name, status, container_status, monitor_status,
+		cdp_url, web_vnc_url, last_task_id, last_error, created_by_user_id, created_by_username,
+		created_at, updated_at, deleted_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(env_id) DO UPDATE SET
+		main_account_id = excluded.main_account_id,
+		client_id = excluded.client_id,
+		rpa_type = excluded.rpa_type,
+		name = excluded.name,
+		status = excluded.status,
+		container_status = excluded.container_status,
+		monitor_status = excluded.monitor_status,
+		cdp_url = excluded.cdp_url,
+		web_vnc_url = excluded.web_vnc_url,
+		last_task_id = excluded.last_task_id,
+		last_error = excluded.last_error,
+		created_by_user_id = excluded.created_by_user_id,
+		created_by_username = excluded.created_by_username,
+		created_at = excluded.created_at,
+		updated_at = excluded.updated_at,
+		deleted_at = excluded.deleted_at
+	WHERE server_browser_envs.status = 'deleted'
+	  AND server_browser_envs.main_account_id = excluded.main_account_id
+	  AND server_browser_envs.client_id = excluded.client_id`,
+		env.EnvID, env.MainAccountID, env.ClientID, env.RPAType, env.Name, env.Status, env.ContainerStatus, env.MonitorStatus,
+		env.CDPURL, env.WebVNCURL, env.LastTaskID, env.LastError, env.CreatedByUserID, env.CreatedByUsername,
+		env.CreatedAt, env.UpdatedAt, env.DeletedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("create or revive server_browser_envs failed: %w", err)
+	}
+	rowsAffected, rowsErr := result.RowsAffected()
+	if rowsErr == nil && rowsAffected == 0 {
+		return ErrEnvConflict
 	}
 	return nil
 }

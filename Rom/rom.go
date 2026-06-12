@@ -157,5 +157,60 @@ func migrate(conn *sql.DB) error {
 			return fmt.Errorf("执行 SQLite 迁移失败: %w", err)
 		}
 	}
+	if err := migrateEdgeClientColumns(conn); err != nil {
+		return err
+	}
 	return nil
+}
+
+// migrateEdgeClientColumns 给旧版 edge_clients 表补齐新心跳事实字段。
+//
+// 设计来源：
+// - 当前节点心跳已经拆成“服务端实际收到时间”和“Client 自报时间”两条事实；
+// - 历史 SQLite 里只有 last_heartbeat_at，直接跑新代码会在查询阶段报 no such column；
+// - 这些字段只保存心跳摘要和来源，不改变 health_status/discovery_status 的业务语义。
+func migrateEdgeClientColumns(conn *sql.DB) error {
+	columns := map[string]string{
+		"last_heartbeat_reported_at": "INTEGER NOT NULL DEFAULT 0",
+		"last_heartbeat_source":      "TEXT NOT NULL DEFAULT ''",
+	}
+	for name, definition := range columns {
+		exists, err := sqliteColumnExists(conn, "edge_clients", name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err = conn.Exec(fmt.Sprintf("ALTER TABLE edge_clients ADD COLUMN %s %s", name, definition)); err != nil {
+			return fmt.Errorf("补齐 edge_clients.%s 失败: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func sqliteColumnExists(conn *sql.DB, table string, column string) (bool, error) {
+	rows, err := conn.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, fmt.Errorf("读取 SQLite 表结构失败: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name string
+		var typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err = rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, fmt.Errorf("扫描 SQLite 表结构失败: %w", err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return false, fmt.Errorf("遍历 SQLite 表结构失败: %w", err)
+	}
+	return false, nil
 }

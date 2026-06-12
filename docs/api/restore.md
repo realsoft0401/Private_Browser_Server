@@ -2,92 +2,401 @@
 
 ## 1. 功能目标
 
-`POST /api/v1/envs/{envId}/restore` 规划用于让 `Private_Browser_Server` 代理目标 Edge，从本机已登记备份包恢复环境目录。
+`POST /api/v1/envs/{envId}/restore` 用于让 `Private_Browser_Server` 代表平台或管理员，向目标 `Private_Browser_Client` 发起一次受控环境包恢复动作。
+
+该接口的业务目标不是“上传一份包再导入”，而是：
+
+- 让目标 Edge Client 读取本机 SQLite 已登记的 `backupPath`
+- 校验本机备份包 checksum 与受控归档元信息
+- 恢复 `browser-envs/{envId}` 运行目录
+- 清理已使用的本机备份 tar 与 backup 索引字段
+- 把环境包主状态从 `backed_up` 推回 `created`
+- 为后续显式 `run` 恢复可用前提
 
 成功后的业务结论应是：
 
 - Edge 已恢复环境目录
-- env 主状态回到 `created`
-- 备份包按 Edge 规则被删除或清理
+- 中心层和 Edge 层都能看到 `status=created`
+- 当前不会自动创建容器、自动拉镜像或自动启动浏览器
 - 调用方下一步可显式执行 `run`
 
 ## 2. 设计来源
 
-- `backup` 已被重新定义为“归档并释放运行目录”，所以必须有与之配对的 `restore`。
-- 用户明确要求 restore 不应重新上传同一份文件，而应复用 Edge 本机 `backupPath`。
+- `backup` 已被明确收敛为“归档资产并释放本机运行目录”，因此必须有与之配对的 `restore`。
+- 用户明确要求 `restore` 不重新上传同一份文件，而是复用 Edge 本机 `backupPath`。
+- 用户明确要求所有正式接口都要沉淀成企业级文档资产，不能只在对话里保留状态机和错误语义。
+- 用户明确要求失败必须留下管理员可追溯错误，包括中心 task、环境摘要错误、SSE 事件和服务日志。
 
 ## 3. 业务边界
 
-### 3.1 负责什么
+### 3.1 这个接口负责什么
 
-- 校验 env 与 client
-- 校验 env 当前应处于 `backed_up/archived`
-- 创建中心 task
-- 调用 Edge restore
-- 把中心缓存收口回 `created`
+- 只负责“让指定 envId 在其原绑定 Edge 上执行 restore”
+- 负责创建中心 task、同步调用 Edge restore、刷新中心环境摘要
+- 负责在同一个 HTTP 请求里，把中心 task 和中心环境包摘要直接收口到最终 success 或 failed
+- 负责把失败原因和修复建议留给管理员
 
-### 3.2 不负责什么
+### 3.2 这个接口不负责什么
 
-- 不自动 run
+- 不自动 `run`
+- 不自动拉镜像
+- 不自动创建容器
 - 不跨节点恢复
 - 不从 Node Server 上传备份包到 Edge
+- 不自动重试
+- 不读取 Edge SQLite、备份 tar 文件或环境目录本体
 
-## 4. 前置校验
+### 3.3 与相近接口的边界
 
-规划中建议：
+- `backup`：归档并释放运行目录，保留可恢复资产
+- `restore`：只从 Edge 本机已登记备份包恢复环境目录
+- `import-package`：导入外部标准包，不读取本机 `backupPath`
+- `run`：启动浏览器容器并做运行态验证，不负责恢复目录
+- `DELETE /api/v1/envs/{envId}/package`：彻底销毁环境资产，不保留恢复入口
 
-1. env 必须存在
-2. client 必须通过 `EnsureClientReadyForBusiness`
-3. 读取 Edge env detail
-4. 仅允许 `status=backed_up` 或等价备份态进入 restore
+## 4. 请求与响应
 
-## 5. 任务编排
+## 4.1 请求
 
-建议采用中心 task：
+```http
+POST /api/v1/envs/{envId}/restore
+```
 
-- `taskType=restore_env` 或未来补充对应常量
-- 创建中心 task
-- 调 Edge `POST /api/v1/edge/browser-envs/{envId}/restore`
-- 绑定 `edgeTaskId`
+路径参数：
 
-## 6. 成功判定
+- `envId`：要恢复的中心环境包 ID
 
-规划建议：
+第一版不设计请求体。
 
-- Edge task 成功，或
-- Edge task 丢失但再次读取 env detail 后，确认 `status=created`
+原因：
 
-## 7. 失败判定
+- Edge 侧 restore 当前也不需要业务参数
+- 备份包路径、校验、解压、恢复目录和清理策略都必须由 Edge 本机受控执行
+- 不允许前端透传文件路径或上传入口，避免企业级 API 退回成危险文件系统恢复接口
 
-- 节点不 ready
-- env 不是备份态
-- Edge restore 失败
-- Edge task 丢失且无法确认 `created`
+## 4.2 成功响应
 
-## 8. 中心缓存收口
+接口会先创建中心 task，再同步调用 Edge `/restore` 并立即完成中心收口。
+因此 HTTP 200 返回时，当前 restore 已经完成成功，不需要再等待 Edge task：
 
-成功后应更新：
+```json
+{
+  "code": 1000,
+  "message": "success",
+  "data": {
+    "taskId": "task_1770000000000000000",
+    "taskType": "restore_env",
+    "status": "success",
+    "clientId": "edge_client_001",
+    "envId": "906090119_tk_323407300419129344",
+    "eventsUrl": "http://node-server.example/api/v1/server/tasks/task_1770000000000000000/events",
+    "message": "环境包恢复完成",
+    "createdAt": 1770000000
+  }
+}
+```
+
+说明：
+
+- `taskId` 是中心任务 ID
+- 当前实现不会创建 `edgeTaskId`，因为 Edge restore 是同步接口
+- `eventsUrl` 仍然保留，主要用于管理员回看本次中心 task 的阶段事件与最终结论
+- HTTP 200 时，中心 `server_tasks.status` 和 `server_browser_envs.status` 已经完成成功收口
+
+## 4.3 失败响应
+
+失败仍使用统一错误包装，但必须返回清晰可执行文案。例如：
+
+- `环境包当前状态为 running，说明运行目录已经存在，不能执行 restore`
+- `目标 Edge Client 当前不是 healthy + verified + online，禁止执行 restore`
+- `环境包当前状态为 created，说明运行目录已经存在，不需要重复 restore`
+
+## 5. 前置校验
+
+Node Server 在真正创建中心 task 前，必须完成下面这组校验。
+
+## 5.1 中心层校验
+
+1. 根据 `envId` 查询 `server_browser_envs`
+2. 确认该环境属于当前 `mainAccountId`
+3. 读取其绑定的 `clientId`
+4. 调用 `EnsureClientReadyForBusiness`
+
+只有当节点满足以下条件时才允许继续：
+
+- `health_status=healthy`
+- `discovery_status=verified`
+- `heartbeatStatus=online`
+
+## 5.2 Edge 预检
+
+中心层还必须先调用一次：
+
+```text
+GET /api/v1/edge/browser-envs/{envId}
+```
+
+用于确认环境包当前状态，而不是直接盲发 restore。
+
+允许进入 restore 的第一版状态：
+
+- `backed_up`
+- `archived`
+
+必须拒绝的状态：
 
 - `status=created`
-- `containerStatus=unknown`
-- `monitorStatus=unknown`
-- 清空运行期连接入口或按 Edge detail 刷新
-- `lastTaskId`
-- `lastError=""`
+- `status=stopped`
+- `status=running`
+- `status=deleted`
+- `status=error`
 
-## 9. 错误与日志规范
+### 5.3 为什么要先做 Edge 预检
 
-应沿用 backup 的管理员留痕规则：
+- 让管理员更早拿到明确错误，而不是中心 task 创建后才失败
+- 避免“任务已创建但目录其实已经存在”的假异步噪音
+- 保证企业级 API 的错误语义稳定，不依赖前端自己猜 restore 是否必要
+
+## 6. 状态流转
+
+第一版建议明确为：
+
+```text
+backed_up -> created   允许
+archived  -> created   允许
+created   -> created   禁止，不需要 restore
+stopped   -> created   禁止，运行目录已经存在
+running   -> created   禁止，不能带着运行态 restore
+error     -> created   禁止，必须先修复环境一致性
+deleted   -> created   禁止
+```
+
+restore 成功后的后续约束：
+
+- 不自动 `run`
+- 后续应由调用方显式执行 `run`
+
+## 7. 任务编排
+
+该接口必须采用中心 task 模式。
+
+## 7.1 中心编排流程
+
+```text
+POST /api/v1/envs/{envId}/restore
+  -> 查 server_browser_envs
+  -> EnsureClientReadyForBusiness
+  -> GET Edge env detail 预检
+  -> 创建 server_tasks(type=restore_env)
+  -> 回写 server_browser_envs.last_task_id
+  -> POST Edge /api/v1/edge/browser-envs/{envId}/restore
+  -> 校验 Edge 同步返回 status=created
+  -> 回写 server_tasks=success 与 server_browser_envs.status=created
+  -> 返回中心 taskId/eventsUrl
+```
+
+## 7.2 为什么要走中心 task
+
+- restore 属于资产恢复动作，必须在中心层可审计
+- 不能只依赖 Edge 当次 HTTP 返回
+- 前端和管理员必须能在 Node Server 看到统一任务视图
+
+## 7.3 SSE 阶段建议
+
+当前实现至少会输出这些阶段：
+
+- `queued`
+- `edge_precheck`
+- `edge_restore`
+- `finalize`
+
+## 8. 成功判定
+
+Node Server 只能按“资产事实”确认 restore 成功，不能因为请求发出去过就默认成功。
+
+## 8.1 明确成功
+
+下面这些条件同时成立，中心 task 才能记 `success`：
+
+1. Edge `/api/v1/edge/browser-envs/{envId}/restore` 同步返回成功
+2. 返回体里的 `status=created`
+3. Node Server 成功把 `server_tasks` 和 `server_browser_envs` 回写到最终成功态
+
+## 8.2 关键成功事实
+
+restore 的成功事实是：
+
+```text
+Edge restore result -> status == created
+```
+
+而不是：
+
+- “Edge 曾经回过 200”
+- “taskId 曾经创建过”
+- “SSE 曾经跑到某一步”
+
+## 9. 失败判定
+
+下面这些都必须统一收口为中心 `failed`：
+
+- 中心 env 不存在
+- 节点不 ready
+- Edge detail 预检失败
+- 预检发现 env 状态不允许 restore
+- 创建中心 task 失败
+- 调 Edge `/restore` 失败
+- Edge `/restore` 返回成功但 `status` 不是 `created`
+- Edge 实际可能成功，但中心缓存回写失败
+
+## 10. 中心缓存收口规则
+
+restore 成功后，中心缓存不复制 Edge 本地备份路径或恢复目录细节。
+
+原因：
+
+- Node Server 当前定位是中心聚合摘要，不复制 Edge 本地文件系统事实
+- 当前最重要的中心事实是“该 env 是否已经从 backed_up 恢复回 created”
+
+## 10.1 成功后更新
+
+restore 成功后中心缓存至少更新：
+
+- `status=created`
+- `container_status=unknown`
+- `monitor_status=unknown`
+- `cdp_url=""`
+- `web_vnc_url=""`
+- `last_task_id=当前中心 taskId`
+- `last_error=""`
+- `updated_at=restoredAt` 或当前时间
+
+## 10.2 失败后更新
+
+restore 失败后：
+
+- 不伪造 `status=created`
+- 保持原主状态
+- 更新 `last_task_id`
+- 更新 `last_error`
+
+## 11. 错误与日志规范
+
+restore 是资产动作，一旦失败必须给管理员留下足够排障信息。
+
+## 11.1 最少留痕位置
+
+至少同时落到：
 
 - `server_tasks.error_message`
-- `env.last_error`
-- task SSE
-- 结构化日志
+- `server task SSE` 阶段事件
+- `server_browser_envs.last_error`
+- Node Server 结构化日志
 
-## 10. 当前实现状态
+## 11.2 结构化日志字段
 
-截至 `2026-06-12`：
+至少包含：
 
-- 尚未落地
-- 已进入正式生命周期代理规划范围
-- 后续应作为 [backup.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/backup.md) 的配对接口一起实现
+- `taskId`
+- `taskType=restore_env`
+- `mainAccountId`
+- `clientId`
+- `envId`
+- `edgeTaskId`
+  - 当前 restore 正常情况下为空，因为 Edge restore 不返回 taskId；该字段保留给统一日志结构复用
+- `stage`
+- `status`
+- `errorSource`
+- `message`
+- `error`
+- `suggestion`
+- `occurredAt`
+
+建议补充：
+
+- `nodeBaseUrl`
+- `envStatus`
+- `containerStatus`
+- `httpStatus`
+- `edgeCode`
+- `edgeMessage`
+
+## 11.3 `errorSource` 建议枚举
+
+- `edge_precheck`
+- `edge_restore`
+- `task_create`
+- `task_finalize`
+- `snapshot_sync_failed`
+
+## 11.4 日志脱敏要求
+
+禁止记录：
+
+- 代理明文
+- fingerprint raw
+- browser-data 内容
+- Cookies
+- Local Storage
+- IndexedDB
+- Session Storage
+- Login Data
+
+## 11.5 错误文案要求
+
+错误不能只写“恢复失败”，必须包含：
+
+- 失败原因
+- 影响范围
+- 修复建议
+
+示例：
+
+- `环境包当前状态为 running，说明运行目录已经存在，Node Server 已拒绝 restore；请先 stop 并确认当前是否真的需要从备份恢复`
+- `目标节点当前 heartbeatStatus=offline，禁止执行 restore；请先恢复节点连通性`
+- `Edge restore 返回成功，但状态不是 created；Node Server 无法确认环境目录已恢复，请管理员检查 Edge 服务日志与环境包详情`
+
+## 12. 联调验收标准
+
+第一版至少覆盖以下场景：
+
+## 12.1 成功路径
+
+1. 目标 env 当前为 `backed_up`
+2. 调用 `POST /api/v1/envs/{envId}/restore`
+3. 中心返回 `taskId`
+4. task 最终收口为 `success`
+5. Edge env detail 显示 `status=created`
+6. Node Server 环境列表里的该 env 也同步为 `created`
+
+## 12.2 关键失败路径
+
+至少验证：
+
+- env 当前为 `running`
+- env 当前为 `created`
+- 节点 `heartbeatStatus=offline`
+- 节点 `health_status=unhealthy`
+- Edge `/restore` HTTP 调用失败
+- Edge `/restore` 返回成功但 `status` 不是 `created`
+- 中心缓存回写失败
+
+## 12.3 通过标准
+
+满足以下条件才算接口完成：
+
+- 成功路径可稳定收口
+- 失败路径都有明确中文错误和修复建议
+- 管理员能在 task detail、SSE、env 摘要、服务日志中看到一致错误事实
+- 没有自动 run、自动拉镜像、自动重试这类越权补救动作
+
+## 13. 当前实现状态
+
+截至 `2026-06-12`，本文件是 `restore` 接口的设计、实现与联调标准文档。
+
+当前代码现状：
+
+- Edge `POST /api/v1/edge/browser-envs/{envId}/restore` 已存在
+- Node Server `POST /api/v1/envs/{envId}/restore` 第一版已落地
+- 当前实现采用“中心 task + 同步 Edge restore + 立即中心收口”模式，不绑定 `edgeTaskId`
+- 本文档继续作为后续 `revalidate/import-package` 对齐的参考样板

@@ -51,6 +51,9 @@ func mapDaoError(err error) error {
 	if errors.Is(err, envDao.ErrEnvNotFound) {
 		return notFoundError("环境包不存在或不属于当前主账号")
 	}
+	if errors.Is(err, envDao.ErrEnvConflict) {
+		return conflictError("中心环境包索引已存在活跃记录，不能用 import-package 直接覆盖；如已执行 package 删除，请确认仍绑定同一 clientId 后再重试")
+	}
 	if strings.Contains(err.Error(), "constraint failed") || strings.Contains(err.Error(), "UNIQUE") {
 		return conflictError("中心环境包索引已存在，不能重复写入相同 envId")
 	}

@@ -37,6 +37,9 @@
 - [run-env.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/run-env.md)
 - [stop-env.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/stop-env.md)
 - [backup.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/backup.md)
+- [restore.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/restore.md)
+- [revalidate.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/revalidate.md)
+- [import-package.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/import-package.md)
 - [delete-env-image.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/delete-env-image.md)
 - [delete-env-package.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/delete-env-package.md)
 
@@ -45,12 +48,6 @@
 - [list-tasks.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/list-tasks.md)
 - [task-detail.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/task-detail.md)
 - [task-events.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/task-events.md)
-
-## 已规划但尚未落地的生命周期接口
-
-- [restore.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/restore.md)
-- [revalidate.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/revalidate.md)
-- [import-package.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/import-package.md)
 
 ## 使用原则
 

@@ -457,6 +457,59 @@ paths:
               schema:
                 $ref: "#/components/schemas/ListEnvsUnifiedResponse"
 
+  /api/v1/envs/import-package:
+    post:
+      tags: [Browser Envs]
+      summary: 代理导入标准环境包（本地任务）
+      description: >
+        Node Server 先校验 `clientId` 对应的目标 Edge Client 必须处于 healthy + verified + online，
+        然后接收一个标准单环境 `.tar.gz` 包，预解析出 `envId/userId/rpaType`，创建中心
+        `import_env_package` 任务，并在后台把临时包转发给
+        Edge `/api/v1/edge/browser-envs/import-package`。
+        当前 Edge import-package 是同步 multipart 接口，不返回 `edgeTaskId`；因此 Node Server
+        使用本地 task + 本地 SSE 事件流收口最终 success/failed。导入成功后会创建新的中心环境聚合记录，
+        状态为 `created`；不自动 run、不自动 pull-image、不自动覆盖同名 envId。
+      parameters:
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [clientId, file]
+              properties:
+                clientId:
+                  type: string
+                  description: 明确指定目标中心节点，Node Server 不允许自动选机器。
+                  example: "9060900010001"
+                file:
+                  type: string
+                  format: binary
+                  description: 标准单环境 `.tar.gz` 包，第一层必须是唯一 `envId/` 根目录。
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。成功时只表示中心导入任务已创建，最终结果要继续看 task detail 或 SSE。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartTaskUnifiedResponse"
+              example:
+                code: 1000
+                message: success
+                data:
+                  taskId: "task_1781223344556677333"
+                  taskType: "import_env_package"
+                  status: "pending"
+                  clientId: "9060900010001"
+                  envId: "906090001_tk_1781223344556677888"
+                  eventsUrl: "http://192.168.10.119:3400/api/v1/server/tasks/task_1781223344556677333/events"
+                  message: "环境包导入任务已创建"
+                  createdAt: 1781226677
+
   /api/v1/envs/{envId}:
     get:
       tags: [Browser Envs]
@@ -540,6 +593,123 @@ paths:
               schema:
                 $ref: "#/components/schemas/StartTaskUnifiedResponse"
 
+  /api/v1/envs/{envId}/backup:
+    post:
+      tags: [Browser Envs]
+      summary: 代理备份环境包（同步收口任务）
+      description: >
+        Node Server 先根据 envId 读取中心环境包索引，再校验目标 Edge Client 必须处于 healthy + verified + online，
+        然后先调用 Edge 环境包详情做状态预检，只允许 `created` 或 `stopped` 进入 backup。
+        预检通过后，Node Server 会创建一条中心 `backup_env` 任务，再同步调用
+        Edge `/api/v1/edge/browser-envs/:envId/backup`。由于当前 Edge backup 是同步接口，
+        本接口不会生成 `edgeTaskId`；HTTP 200 返回时，中心 `server_tasks` 与
+        `server_browser_envs` 已经收口为最终成功状态。若 Edge 返回失败、返回体里的
+        `status` 不是 `backed_up`，或中心摘要回写失败，则本次 backup 直接记 failed，
+        不自动重试。
+      parameters:
+        - $ref: "#/components/parameters/EnvId"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。成功时表示中心与 Edge 已同步完成 backup 收口。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartTaskUnifiedResponse"
+              example:
+                code: 1000
+                message: success
+                data:
+                  taskId: "task_1781223344556677888"
+                  taskType: "backup_env"
+                  status: "success"
+                  clientId: "9060900010001"
+                  envId: "906090001_tk_1781223344556677888"
+                  eventsUrl: "http://192.168.10.119:3400/api/v1/server/tasks/task_1781223344556677888/events"
+                  message: "环境包备份完成"
+                  createdAt: 1781223344
+
+  /api/v1/envs/{envId}/restore:
+    post:
+      tags: [Browser Envs]
+      summary: 代理恢复环境包（同步收口任务）
+      description: >
+        Node Server 先根据 envId 读取中心环境包索引，再校验目标 Edge Client 必须处于 healthy + verified + online，
+        然后先调用 Edge 环境包详情做状态预检，只允许 `backed_up` 或 `archived` 进入 restore。
+        预检通过后，Node Server 会创建一条中心 `restore_env` 任务，再同步调用
+        Edge `/api/v1/edge/browser-envs/:envId/restore`。由于当前 Edge restore 是同步接口，
+        本接口不会生成 `edgeTaskId`；HTTP 200 返回时，中心 `server_tasks` 与
+        `server_browser_envs` 已经收口为最终成功状态。若 Edge 返回失败、返回体里的
+        `status` 不是 `created`，或中心摘要回写失败，则本次 restore 直接记 failed，
+        不自动重试。
+      parameters:
+        - $ref: "#/components/parameters/EnvId"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。成功时表示中心与 Edge 已同步完成 restore 收口。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartTaskUnifiedResponse"
+              example:
+                code: 1000
+                message: success
+                data:
+                  taskId: "task_1781223344556677999"
+                  taskType: "restore_env"
+                  status: "success"
+                  clientId: "9060900010001"
+                  envId: "906090001_tk_1781223344556677888"
+                  eventsUrl: "http://192.168.10.119:3400/api/v1/server/tasks/task_1781223344556677999/events"
+                  message: "环境包恢复完成"
+                  createdAt: 1781224455
+
+  /api/v1/envs/{envId}/revalidate:
+    post:
+      tags: [Browser Envs]
+      summary: 代理异常环境重新准入（SSE任务）
+      description: >
+        Node Server 先根据 envId 读取中心环境包索引，再校验目标 Edge Client 必须处于 healthy + verified + online，
+        然后先调用 Edge 环境包详情做状态预检，只允许 `error` 进入 revalidate。
+        预检通过后，Node Server 会创建一条中心 `revalidate_env` 任务，再调用
+        Edge `/api/v1/edge/browser-envs/:envId/revalidate` 创建真实 Edge task，并把
+        `edgeTaskId` 绑定到中心任务。该动作不会启动容器、不会拉镜像、不会证明网络指纹最终可用；
+        Edge task 丢失时，Node Server 必须再次读取环境详情确认是否已恢复到 `created/stopped`，
+        否则统一记 failed，不自动重试。
+      parameters:
+        - $ref: "#/components/parameters/EnvId"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。成功时只表示中心 revalidate 任务已创建。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartTaskUnifiedResponse"
+              example:
+                code: 1000
+                message: success
+                data:
+                  taskId: "task_1781223344556677000"
+                  taskType: "revalidate_env"
+                  status: "pending"
+                  clientId: "9060900010001"
+                  envId: "906090001_tk_1781223344556677888"
+                  edgeTaskId: "task_1770000000000000000_12345"
+                  eventsUrl: "http://192.168.10.119:3400/api/v1/server/tasks/task_1781223344556677000/events"
+                  message: "环境包重新校验任务已创建"
+                  createdAt: 1781225566
+
   /api/v1/envs/{envId}/del:
     delete:
       tags: [Browser Envs]
@@ -611,7 +781,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [create_env, run_env, stop_env, pull_image, backup_env, delete_env_package]
+            enum: [create_env, run_env, stop_env, pull_image, backup_env, restore_env, revalidate_env, import_env_package, delete_env_package]
           example: "run_env"
         - name: status
           in: query
@@ -1470,8 +1640,8 @@ components:
     ServerTask:
       type: object
       description: >
-        Node Server 的平台级任务事实。它把主账号、操作者、clientId、envId 和 edgeTaskId 串起来，
-        作为长期查询、审计和跨节点联调的中心任务记录。
+        Node Server 的平台级任务事实。它把主账号、操作者、clientId、envId 和必要时的 edgeTaskId 串起来，
+        作为长期查询、审计和跨节点联调的中心任务记录。像 backup、restore 这类同步 Edge 动作，中心 task 可以没有 edgeTaskId。
       properties:
         taskId:
           type: string
@@ -1493,11 +1663,11 @@ components:
           example: "906090001_tk_1781223344556677888"
         type:
           type: string
-          enum: [create_env, run_env, stop_env, pull_image, backup_env, delete_env_package]
+          enum: [create_env, run_env, stop_env, pull_image, backup_env, restore_env, revalidate_env, import_env_package, delete_env_package]
           example: "run_env"
           description: >
-            当前已落库任务类型。backup_env 已为后续接口预留常量；现阶段真正会写入的主要是
-            create_env、run_env、stop_env、delete_env_package，run 过程中镜像预检还可能产生 pull_image 子任务。
+            当前已落库任务类型。现阶段真正会写入的主要是
+            create_env、run_env、stop_env、backup_env、restore_env、revalidate_env、import_env_package、delete_env_package，run 过程中镜像预检还可能产生 pull_image 子任务。
         status:
           type: string
           enum: [pending, running, success, failed, canceled]
@@ -1507,6 +1677,10 @@ components:
         edgeTaskId:
           type: string
           example: "task_1770000000000000000_12345"
+          description: >
+            仅当 Node Server 需要绑定 Edge 短期任务时才会有值。像 `backup_env` 这类同步 Edge 动作，
+            `restore_env` 这类同步 Edge 动作，以及 `import_env_package` 这类本地 task + 同步 Edge 动作，
+            当前实现不会返回 edgeTaskId。
         eventsUrl:
           type: string
           description: 由当前 Node Server 请求 Host 生成的中心任务 SSE 地址。
@@ -1561,14 +1735,17 @@ components:
           example: 1781223352
     StartTaskResponse:
       type: object
-      description: 长动作创建成功后的统一摘要；前端拿到 taskId 后继续查任务详情或订阅 SSE。
+      description: >
+        中心任务摘要。大多数长动作会先返回 pending/running，再由前端继续查任务详情或订阅 SSE；
+        但像 `backup_env`、`restore_env` 这类同步 Edge 动作，HTTP 200 返回时可能已经是最终 `success`。
+        `import_env_package` 当前会先返回 pending，再由 Node Server 本地任务在后台同步等待 Edge 导入结果。
       properties:
         taskId:
           type: string
           example: "task_1781223344556677888"
         taskType:
           type: string
-          enum: [create_env, run_env, stop_env, pull_image, backup_env, delete_env_package]
+          enum: [create_env, run_env, stop_env, pull_image, backup_env, restore_env, revalidate_env, import_env_package, delete_env_package]
           example: "run_env"
           description: 返回给前端的启动任务类型字段；对应持久化任务详情里的 `task.type`。
         status:
@@ -1585,6 +1762,8 @@ components:
         edgeTaskId:
           type: string
           example: "task_1770000000000000000_12345"
+          description: >
+            仅当该中心任务实际绑定了 Edge task 时才返回。`backup_env`、`restore_env`、`import_env_package` 当前不会返回该字段。
         eventsUrl:
           type: string
           description: 由当前 Node Server 请求 Host 生成的中心任务 SSE 地址。

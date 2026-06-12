@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -140,6 +143,62 @@ type DockerImageRemoveResult struct {
 	Untagged string `json:"untagged,omitempty"`
 }
 
+// BackupBrowserEnvResponse 是 Edge `/browser-envs/:envId/backup` 的同步结果摘要。
+//
+// 设计来源：
+// - 当前 Edge backup 是同步接口，不返回 edge taskId；
+// - Node Server 仍需要读取 status/backupPath/checksum/size，才能把中心 task 和环境包摘要收口到 backed_up；
+// - 这里只保留中心层判断成功与管理员排障需要的稳定字段，不复制 Edge 内部更细的实现细节。
+type BackupBrowserEnvResponse struct {
+	EnvID          string `json:"envId"`
+	UserID         string `json:"userId"`
+	RPAType        string `json:"rpaType"`
+	Status         string `json:"status"`
+	BackupPath     string `json:"backupPath"`
+	BackupChecksum string `json:"backupChecksum"`
+	BackupSize     int64  `json:"backupSize"`
+	BackupAt       int64  `json:"backupAt"`
+	Message        string `json:"message"`
+}
+
+// RestoreBrowserEnvResponse 是 Edge `/browser-envs/:envId/restore` 的同步结果摘要。
+//
+// 设计来源：
+// - 当前 Edge restore 和 backup 一样都是同步资产动作，不返回 edge taskId；
+// - Node Server 需要读取 status/restoredAt 等字段，把中心 task 和环境包摘要直接收口回 created；
+// - 这里只保留中心层判断成功与排障所需的稳定字段，不复制 Edge 的完整文件恢复细节。
+type RestoreBrowserEnvResponse struct {
+	EnvID      string `json:"envId"`
+	UserID     string `json:"userId"`
+	RPAType    string `json:"rpaType"`
+	Status     string `json:"status"`
+	EnvPath    string `json:"envPath"`
+	RestoredAt int64  `json:"restoredAt"`
+	Message    string `json:"message"`
+}
+
+// ImportBrowserEnvPackageResponse 是 Edge `/browser-envs/import-package` 的同步结果摘要。
+//
+// 设计来源：
+// - 当前 Edge import-package 是同步 multipart 导入接口，不返回 edge taskId；
+// - Node Server 需要读取导入后的 envId/status/ports，才能创建中心环境聚合记录并收口 server task；
+// - 这里只保留中心层判断成功和列表聚合需要的稳定字段，不复制 Edge staging/校验过程细节。
+type ImportBrowserEnvPackageResponse struct {
+	EnvID       string   `json:"envId"`
+	UserID      string   `json:"userId"`
+	RPAType     string   `json:"rpaType"`
+	EnvSequence int      `json:"envSequence"`
+	Ports       PortsRef `json:"ports"`
+	EnvPath     string   `json:"envPath"`
+	Status      string   `json:"status"`
+	ImportedAt  int64    `json:"importedAt"`
+}
+
+type PortsRef struct {
+	CDP int `json:"cdp"`
+	VNC int `json:"vnc"`
+}
+
 // DoJSON 发送一次 JSON 请求并解析 Edge 统一响应。
 //
 // body 为 nil 时不发送请求体；target 必须是指针或 nil。这个函数不做任何自动重试，
@@ -168,6 +227,93 @@ func (c *Client) DoJSON(ctx context.Context, baseURL string, method string, path
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	req.Header.Set("Accept", "application/json")
+	if strings.TrimSpace(apiKey) != "" {
+		req.Header.Set("X-Edge-API-Key", strings.TrimSpace(apiKey))
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return &EdgeError{Message: "Edge API 请求失败，未重试；请检查节点健康、网络、防火墙和 Client 服务状态: " + err.Error()}
+	}
+	defer resp.Body.Close()
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return fmt.Errorf("读取 Edge 响应失败: %w", err)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return &EdgeError{
+			HTTPStatus: resp.StatusCode,
+			Message:    fmt.Sprintf("Edge API HTTP 状态异常 status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBytes))),
+		}
+	}
+
+	var envelope Response[json.RawMessage]
+	if err = json.Unmarshal(respBytes, &envelope); err != nil {
+		return fmt.Errorf("解析 Edge 统一响应失败: %w", err)
+	}
+	if envelope.Code != 1000 {
+		return &EdgeError{
+			HTTPStatus:  resp.StatusCode,
+			EdgeCode:    envelope.Code,
+			EdgeMessage: envelope.Message,
+			Message:     envelope.Message,
+		}
+	}
+	if target == nil {
+		return nil
+	}
+	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
+		return nil
+	}
+	if err = json.Unmarshal(envelope.Data, target); err != nil {
+		return fmt.Errorf("解析 Edge data 失败: %w", err)
+	}
+	return nil
+}
+
+// DoMultipartFile 发送一次 multipart/form-data 文件上传请求并解析 Edge 统一响应。
+//
+// 设计来源：
+// - import-package 当前是 Edge 正式保留的同步 multipart 接口，Node Server 不能绕回 SSH 或直接写 Edge 目录；
+// - 这里沿用 DoJSON 的统一错误映射，但把请求体改成流式 multipart，避免先把大文件整包读入内存；
+// - 资产动作失败后仍然不自动重试；网络中断、上传失败或 Edge 校验拒绝都交给上层任务收口。
+func (c *Client) DoMultipartFile(ctx context.Context, baseURL string, method string, path string, apiKey string, fieldName string, filePath string, fileName string, target any) error {
+	if c == nil {
+		c = New()
+	}
+	endpoint, err := buildEdgeURL(baseURL, path)
+	if err != nil {
+		return err
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("打开待上传文件失败: %w", err)
+	}
+	defer file.Close()
+
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	go func() {
+		defer pw.Close()
+		defer writer.Close()
+
+		part, createErr := writer.CreateFormFile(strings.TrimSpace(fieldName), filepath.Base(strings.TrimSpace(fileName)))
+		if createErr != nil {
+			_ = pw.CloseWithError(fmt.Errorf("创建 multipart 文件字段失败: %w", createErr))
+			return
+		}
+		if _, copyErr := io.Copy(part, file); copyErr != nil {
+			_ = pw.CloseWithError(fmt.Errorf("写入 multipart 文件内容失败: %w", copyErr))
+			return
+		}
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, pr)
+	if err != nil {
+		return fmt.Errorf("创建 Edge multipart 请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Accept", "application/json")
 	if strings.TrimSpace(apiKey) != "" {
 		req.Header.Set("X-Edge-API-Key", strings.TrimSpace(apiKey))
@@ -259,6 +405,27 @@ func (c *Client) PullDockerImageTask(ctx context.Context, baseURL string, apiKey
 func (c *Client) DeleteBrowserEnvPackageTask(ctx context.Context, baseURL string, apiKey string, envID string) (*TaskStartResponse, error) {
 	var result TaskStartResponse
 	err := c.DoJSON(ctx, baseURL, http.MethodDelete, "/api/v1/edge/browser-envs/"+url.PathEscape(envID)+"/package", apiKey, nil, &result)
+	return &result, err
+}
+
+// BackupBrowserEnv 调用 Edge `/backup` 并返回同步结果摘要。
+func (c *Client) BackupBrowserEnv(ctx context.Context, baseURL string, apiKey string, envID string) (*BackupBrowserEnvResponse, error) {
+	var result BackupBrowserEnvResponse
+	err := c.DoJSON(ctx, baseURL, http.MethodPost, "/api/v1/edge/browser-envs/"+url.PathEscape(envID)+"/backup", apiKey, nil, &result)
+	return &result, err
+}
+
+// RestoreBrowserEnv 调用 Edge `/restore` 并返回同步结果摘要。
+func (c *Client) RestoreBrowserEnv(ctx context.Context, baseURL string, apiKey string, envID string) (*RestoreBrowserEnvResponse, error) {
+	var result RestoreBrowserEnvResponse
+	err := c.DoJSON(ctx, baseURL, http.MethodPost, "/api/v1/edge/browser-envs/"+url.PathEscape(envID)+"/restore", apiKey, nil, &result)
+	return &result, err
+}
+
+// ImportBrowserEnvPackage 调用 Edge `/import-package` 并返回同步导入结果摘要。
+func (c *Client) ImportBrowserEnvPackage(ctx context.Context, baseURL string, apiKey string, filePath string, fileName string) (*ImportBrowserEnvPackageResponse, error) {
+	var result ImportBrowserEnvPackageResponse
+	err := c.DoMultipartFile(ctx, baseURL, http.MethodPost, "/api/v1/edge/browser-envs/import-package", apiKey, "file", filePath, fileName, &result)
 	return &result, err
 }
 

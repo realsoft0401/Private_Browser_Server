@@ -54,6 +54,11 @@ type ServerConfig struct {
 // 这是用户确认后的 Node Server 口径：平台管理端使用 MySQL，
 // Node Server 只保存本节点控制面需要的节点、环境聚合和任务摘要，因此用 SQLite 降低部署成本。
 // 后续 Repository 只能通过 Rom.DB() 使用连接，不能在业务层重新打开数据库。
+//
+// 当前进一步收口为“单库事实源”：
+// - 不再因为 config-dev / config-test / config-prod 切换出多份 SQLite；
+// - 本地开发、联调和正式部署默认都指向 private_browser_server.db；
+// - 这是新项目正式口径，不保留旧库兼容迁移。
 type SQLiteConfig struct {
 	Path         string `mapstructure:"path"`
 	MaxOpenConns int    `mapstructure:"max_open_conns"`
@@ -138,6 +143,10 @@ func Init(projectRoot string) error {
 }
 
 // setDefaults 保持 Server 默认配置集中可查。
+//
+// 默认数据库文件固定为 data/private_browser_server.db。
+// 即使当前进程按 dev/test/prod 选择不同 yaml，也不再切换成多份环境库，
+// 避免联调时出现“接口变了但查的是另一份旧库”的假问题。
 func setDefaults(env string) {
 	configEngine.SetDefault("name", "private-browser-server")
 	configEngine.SetDefault("mode", env)

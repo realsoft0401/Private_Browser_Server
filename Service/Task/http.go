@@ -392,6 +392,9 @@ func canConfirmTaskFromEnv(taskType string, snapshot *edgeBrowserEnvIndex) bool 
 		status := strings.TrimSpace(snapshot.Status)
 		containerStatus := strings.TrimSpace(snapshot.ContainerStatus)
 		return status == envModel.EnvStatusStopped || status == envModel.EnvStatusCreated || status == envModel.EnvStatusBackedUp || containerStatus == "exited" || containerStatus == "missing"
+	case taskModel.TaskTypeRevalidateEnv:
+		status := strings.TrimSpace(snapshot.Status)
+		return status == envModel.EnvStatusCreated || status == envModel.EnvStatusStopped
 	case taskModel.TaskTypeDeleteEnvPackage:
 		return strings.TrimSpace(snapshot.Status) == envModel.EnvStatusDeleted
 	default:

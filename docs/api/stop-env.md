@@ -52,7 +52,13 @@ POST /api/v1/envs/{envId}/stop
 
 1. 根据 `envId` 读取中心 env
 2. 调 `EnsureClientReadyForBusiness`
-3. 允许 stop 的具体环境状态以后续实现为准，但第一版仍以统一业务放行门槛为前提
+3. 当前 HTTP 入口不会在中心层额外猜测“哪些 env 状态一定允许 stop”，而是把精确生命周期合法性继续交给 Edge `/stop` 判断
+
+### 5.1 当前实现口径
+
+- Node Server 在入口阶段只锁住节点业务放行门槛：`healthy + verified + online`
+- 目标环境如果已经 `deleted`、`error` 或其它 Edge 不接受的状态，最终由 Edge stop 明确拒绝
+- Node Server 不在入口阶段伪造一套与 Edge 脱节的 stop 状态机，避免双边规则漂移
 
 ## 6. 任务编排
 
@@ -120,6 +126,14 @@ stop request
 
 - 正常 stop 成功
 - 节点 offline 时拒绝 stop
+- Edge 明确拒绝不允许 stop 的环境状态
 - Edge task failed
 - Edge task 丢失但可确认停止
 - Edge task 丢失且不可确认停止
+
+## 12. 当前实现状态
+
+截至 `2026-06-12`：
+
+- Node Server `POST /api/v1/envs/{envId}/stop` 已落地
+- 当前实现采用“中心 task + Edge task 绑定 + task detail/SSE 收口”模式

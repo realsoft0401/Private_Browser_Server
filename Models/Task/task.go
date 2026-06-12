@@ -7,7 +7,7 @@ import "encoding/json"
 // 设计来源：
 // - Edge Client 的 task 只是进程内短期观察通道，服务重启后可能丢失；
 // - Node Server 需要一条可审计、可查询的中心事实，把主账号、操作者、Client、envId 和 Edge taskId 串起来；
-// - 当前阶段先围绕 run/stop 任务落库，后续 backup/restore/pull-image/RPA 继续复用同一模型。
+// - 当前阶段先围绕 run/stop/backup/restore 任务落库，后续 pull-image/RPA 继续复用同一模型。
 //
 // 职责边界：
 // - 负责保存中心 taskId、归属、目标资源、Edge task 绑定和最终 success/failed 结论；
@@ -124,6 +124,9 @@ const (
 	TaskTypeStopEnv          = "stop_env"
 	TaskTypePullImage        = "pull_image"
 	TaskTypeBackupEnv        = "backup_env"
+	TaskTypeRestoreEnv       = "restore_env"
+	TaskTypeRevalidateEnv    = "revalidate_env"
+	TaskTypeImportEnvPackage = "import_env_package"
 	TaskTypeDeleteEnvPackage = "delete_env_package"
 
 	TaskStatusPending  = "pending"

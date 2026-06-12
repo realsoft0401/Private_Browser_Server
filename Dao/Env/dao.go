@@ -8,6 +8,7 @@ import (
 )
 
 var ErrEnvNotFound = repository.ErrEnvNotFound
+var ErrEnvConflict = repository.ErrEnvConflict
 
 // ModelHandler 保留 Node Server 既有的 Dao 业务动作入口风格。
 //
@@ -31,6 +32,11 @@ func NewModelHandler() *ModelHandler {
 // CreateServerBrowserEnv 写入中心环境包聚合索引。
 func (h *ModelHandler) CreateServerBrowserEnv(ctx context.Context, env *model.ServerBrowserEnv) error {
 	return h.repo.Create(ctx, env)
+}
+
+// CreateOrReviveDeletedServerBrowserEnv 专门给 import-package 使用，允许同节点复活 deleted 聚合记录。
+func (h *ModelHandler) CreateOrReviveDeletedServerBrowserEnv(ctx context.Context, env *model.ServerBrowserEnv) error {
+	return h.repo.CreateOrReviveDeleted(ctx, env)
 }
 
 // GetServerBrowserEnvByID 查询单个中心环境包索引。
