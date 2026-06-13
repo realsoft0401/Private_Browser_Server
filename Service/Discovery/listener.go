@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	NodeRepo "private_browser_server/Repository/Node"
 	"private_browser_server/Settings"
 )
 
@@ -55,7 +54,7 @@ type DiscoveredClient struct {
 // Listener 管理 UDP discovery 监听和内存缓存。
 //
 // V1 只做测试和发现列表，不自动写 edge_clients；自动登记必须复用 Edge Client 注册、HTTP 探测、
-// Docker 2375 探测和 identity_changed/ip_mismatch 状态机，不能藏在 UDP 收包循环里。
+// Docker 2375 探测和 blocked/ip_mismatch 状态机，不能藏在 UDP 收包循环里。
 type Listener struct {
 	config  *Settings.DiscoveryConfig
 	conn    net.PacketConn
@@ -197,30 +196,7 @@ func (l *Listener) handlePacket(addr net.Addr, data []byte) {
 	item.DiscardReason = ""
 	l.clients[key] = item
 	l.mu.Unlock()
-	l.syncRegisteredHeartbeat(sourceIP, payload, now)
-}
-
-// syncRegisteredHeartbeat 在 UDP 收包时实时回写已注册 Edge Client 的最后心跳。
-//
-// 这一步只更新心跳事实，不创建 Client、不改变 healthStatus、不把 discoveryStatus 改成 verified；
-// 其中 last_heartbeat_at 记录的是 Node Server 实际收到报文的时间，last_heartbeat_reported_at
-// 记录的是 Client 自报时间。这样既能保持 heartbeatStatus 的中心判断准确，也能保留排障所需的时钟偏差线索。
-func (l *Listener) syncRegisteredHeartbeat(sourceIP string, payload BeaconPayload, fallbackAt int64) {
-	receivedAt := fallbackAt
-	reportedAt := payload.LastHeartbeatAt
-	if reportedAt <= 0 {
-		reportedAt = fallbackAt
-	}
-	if err := (NodeRepo.Repository{}).UpdateHeartbeatByDiscovery(
-		context.Background(),
-		payload.BaseURL,
-		payload.ClientIP,
-		sourceIP,
-		receivedAt,
-		reportedAt,
-	); err != nil {
-		log.Printf("udp discovery heartbeat sync failed, sourceIp=%s, baseUrl=%s, err=%v\n", sourceIP, payload.BaseURL, err)
-	}
+	syncRegisteredHeartbeat(sourceIP, payload, now)
 }
 
 func (l *Listener) validate(payload BeaconPayload) string {

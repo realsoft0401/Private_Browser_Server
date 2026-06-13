@@ -113,7 +113,7 @@ Server 访问 Edge 边界：
 - 后期可在客户节点性能足够强时评估受控批量能力，但必须具备节点容量评估、并发上限、队列调度和资源保护；批量入口仍必须逐个环境包校验节点健康、环境包状态、配置一致性和网络指纹要求。
 - 当前 Server 不实现定时自动生命周期调度，没有定时 run、定时 stop、定时 backup、定时 delete 或无人值守自动恢复需求；所有生命周期动作必须来自用户、管理员或明确业务 API 主动请求。
 - Server 可以接收 Client 状态同步、心跳和任务进度，但不能把这些后台机制扩展成自动启动、自动停止、自动备份或自动删除环境包的计划任务。
-- 指定节点处于 `unhealthy/offline/stale/identity_changed/discovered`，或架构为 `unknown`、Docker 不可达、镜像策略不可用时，Server 必须拒绝创建和使用，并返回明确原因与修复方向。
+- 指定节点处于 `unhealthy/offline/stale/blocked`，或架构为 `unknown`、Docker 不可达、镜像策略不可用时，Server 必须拒绝创建和使用，并返回明确原因与修复方向。
 - `stale` 表示 Server 对该节点或环境包的中心缓存不可信，不能作为创建或运行放行状态；必须重新探测恢复为 healthy/verified 后才能继续。
 - `server_browser_envs.client_id` 是环境包绑定的中心 Client 身份，数据库内部暂保留列名；对外 API 和业务语言统一叫 `clientId`。历史任务、环境包聚合和审计都应围绕该 `clientId` 追踪。
 - Edge 失联、心跳超时、校验失败或中心缓存与 Edge 返回不一致时，Server 统一把中心缓存标记为 `stale`，具体原因写入错误说明或同步摘要字段。
@@ -142,16 +142,16 @@ RPA / CDP 操作边界：
 - 三层服务统一口径：商业设备唯一 ID 统一叫 `clientId`，由 Node Server 分配并维护，底层保存为 `edge_clients.id`，不是 Client Edge 自生成的 `device_unique_id`。
 - Node Server 可以按 `mainAccountId + 4 位设备序号` 生成对外Client 设备号，例如 `9060901190001`。这个设备号用于 PlatformServer 商业机位归属、状态上报和审计。
 - Client 只提供 IP、baseUrl、hostname、os、arch、Docker 信息等本机事实；Node Server 探测确认后生成或绑定 `edge_clients.id`。
-- 如果设备 IP/baseUrl 变化或设备重置，Node Server 不能自动创建新商业设备 ID 代替旧 ID，必须标记 `ip_mismatch/identity_changed/manual_update_required`，等待管理员确认后保持原 `edge_clients.id` 不变并更新接入地址。
-- Server 如果发现同一 clientIp/baseUrl 对应的 hostname、os、arch、dockerInfo 等设备事实明显变化，应标记 `identity_changed` 或等价状态，禁止自动覆盖节点事实，必须由管理员确认。
-- 如果已登记节点仍能通过原心跳、HTTP 探测或管理连接证明同一个 Client 还在线，但新 UDP beacon 的 clientIp 与 Server 记录不一致，Server 应标记 `identity_changed`，记录 `ip_mismatch` 原因，并提示管理员手动更新节点 IP。
+- 如果设备 IP/baseUrl 变化或设备重置，Node Server 不能自动创建新商业设备 ID 代替旧 ID，必须标记 `blocked + ip_mismatch`，等待管理员确认后保持原 `edge_clients.id` 不变并更新接入地址。
+- Server 如果发现同一 clientIp/baseUrl 对应的 hostname、os、arch、dockerInfo 等设备事实明显变化，应标记 `blocked + device_fact_changed` 或等价状态，禁止自动覆盖节点事实，必须由管理员确认。
+- 如果已登记节点仍能通过原心跳、HTTP 探测或管理连接证明同一个 Client 还在线，但新 UDP beacon 的 clientIp 与 Server 记录不一致，Server 应标记 `blocked`，记录 `ip_mismatch` 原因，并提示管理员手动更新节点 IP。
 - IP 不一致时，Server 不能自动覆盖原 `client_ip/base_url`，也不能自动创建新节点；管理员确认后，才能把原 `clientId/edge_clients.id` 绑定到新的 clientIp/baseUrl。
 - 管理员手动确认更新 IP 后，原 `clientId/edge_clients.id` 必须保持不变，只更新 `client_ip/base_url` 和发现/健康摘要；历史任务、环境包聚合、审计记录仍绑定原 `clientId`。
 - IP 更新完成后，Server 必须重新执行 `/health`、`/api/v1/edge/device-info`、Docker 2375 探测和架构归一化。只有设备事实仍匹配原节点，才可以把 discovery 状态恢复为 `verified`。
-- 如果更新后发现 `arch`、Docker 环境、hostname、环境包列表或设备能力与原节点差异过大，Server 不能直接恢复 `verified`，应继续保持 `identity_changed` 并要求管理员确认。
+- 如果更新后发现 `arch`、Docker 环境、hostname、环境包列表或设备能力与原节点差异过大，Server 不能直接恢复 `verified`，应继续保持 `blocked + device_fact_changed` 并要求管理员确认。
 - Server 收到 UDP beacon 后，必须再通过 Client HTTP API 完成 `/health`、`/api/v1/edge/device-info` 或等价探测，确认服务可达、设备能力、Docker 状态和架构归一化后，才允许写入或更新 `edge_clients`。
 - `discovered` 只是节点发现线索，不是可用状态；处于 `discovered` 的节点不能创建环境包，也不能执行 run/stop/backup/restore/delete/import-package。
-- 节点进入 `verified` 前，Server 必须确认 UDP 报文匹配 `discoveryMagic/service/discoveryGroup/protocolVersion`，Client `/health` 可达，`/api/v1/edge/device-info` 可达，Docker 2375 可达，架构已归一化为 `amd64` 或 `arm64`，clientIp/baseUrl 与记录一致，不存在 `ip_mismatch/identity_changed/stale/unhealthy/offline`，且镜像策略能按该架构选出可用镜像。
+- 节点进入 `verified` 前，Server 必须确认 UDP 报文匹配 `discoveryMagic/service/discoveryGroup/protocolVersion`，Client `/health` 可达，`/api/v1/edge/device-info` 可达，Docker 2375 可达，架构已归一化为 `amd64` 或 `arm64`，clientIp/baseUrl 与记录一致，不存在 `blocked + discoveryReason!= "" / stale / unhealthy / offline`，且镜像策略能按该架构选出可用镜像。
 - `verified` 只代表身份与能力验证通过，不单独代表业务可用；只有 `health_status=healthy` 且 `discovery_status=verified` 时，Server 才能对节点下发环境包创建和生命周期动作。
 - `health_status=unhealthy` 时，Server 不能把 stop/delete 当成例外下发给 Edge。当前口径是节点不带病工作，所有环境包生命周期动作统一禁止，避免在 Docker、磁盘、SQLite、镜像或设备事实异常时扩大损坏。
 - Client `/health` 只返回本机视角 `healthy/unhealthy` 和 checks 明细，不能也不应该返回中心节点的 `offline/stale`。
@@ -233,8 +233,8 @@ cpu_cores
 memory_total_mb
 docker_version
 health_status         healthy / unhealthy / offline
-discovery_status      discovered / verified / identity_changed
-discovery_reason      empty / ip_mismatch / device_fact_changed / manual_update_required
+discovery_status      blocked / verified
+discovery_reason      empty / ip_mismatch / device_fact_changed
 last_heartbeat_at
 created_at
 updated_at

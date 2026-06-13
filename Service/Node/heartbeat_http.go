@@ -19,10 +19,10 @@ import (
 // ReceiveHeartbeat 接收 Edge Client 主动上报的正式心跳。
 //
 // 设计来源：
-// - 之前 Node Server 只有 UDP discovery 的被动回写，这会让 last_heartbeat_at 只反映 beacon 命中时间；
-// - 用户确认 last_heartbeat_at 应该是“心跳时间”，但更稳妥的做法是把“服务端接收时间”作为主事实，
-//   同时保留 Client 自报时间用于排障和时钟偏差分析；
-// - 这个接口是 Edge Client 直接打给 Node Server 的，不依赖 Platform Header，因为它不是前端业务调用。
+//   - 之前 Node Server 只有 UDP discovery 的被动回写，这会让 last_heartbeat_at 只反映 beacon 命中时间；
+//   - 用户确认 last_heartbeat_at 应该是“心跳时间”，但更稳妥的做法是把“服务端接收时间”作为主事实，
+//     同时保留 Client 自报时间用于排障和时钟偏差分析；
+//   - 这个接口是 Edge Client 直接打给 Node Server 的，不依赖 Platform Header，因为它不是前端业务调用。
 //
 // 职责边界：
 // - 只接受 discoveryMagic/service/discoveryGroup/protocolVersion/baseUrl/clientIp 这类非敏感摘要；
@@ -56,16 +56,13 @@ func ReceiveHeartbeat(ctx *gin.Context) {
 		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeServerBusy, "查找目标 Edge Client 失败: "+err.Error())
 		return
 	}
-
-	node.LastHeartbeatAt = receivedAt
-	node.LastHeartbeatReportedAt = reportedAt
-	node.LastHeartbeatSource = "http"
-	node.UpdatedAt = receivedAt
-	if err = repo.UpdateHeartbeat(ctx.Request.Context(), node.MainAccountID, node.ID, receivedAt, reportedAt, node.LastHeartbeatSource); err != nil {
-		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeServerBusy, "保存心跳失败: "+err.Error())
+	applyDiscoveryObservation(node, req.BaseURL, req.ClientIP, sourceIP, receivedAt, reportedAt, "http")
+	if err = repo.UpdateObservedDiscovery(ctx.Request.Context(), node); err != nil {
+		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeServerBusy, "保存心跳与发现摘要失败: "+err.Error())
 		return
 	}
 	attachHeartbeatStatus(node, receivedAt)
+	attachNodeGovernanceActions(node)
 	HttpResponse.ResponseSuccess(ctx, heartbeatResponse{
 		ClientID:                node.ID,
 		MainAccountID:           node.MainAccountID,

@@ -14,6 +14,24 @@ type registerNodeRequest struct {
 	DockerAPIURL string `json:"dockerApiUrl"`
 }
 
+// confirmAddressUpdateRequest 是管理员确认节点地址更新时的最小请求体。
+//
+// 设计来源：
+//   - 当前节点一旦进入 blocked + ip_mismatch，系统必须提供受控恢复出口，不能要求管理员手工改库；
+//   - 用户已经明确，IP 更新后必须保持原 clientId 不变，只更新 baseUrl/clientIp/dockerApiUrl，
+//     然后重新跑完整探测；
+//   - 因此这里把“管理员已经确认这还是同一台机器”的输入收敛成最新地址事实，不额外引入第二套节点身份。
+//
+// 职责边界：
+// - 这里只接受新的接入地址；
+// - 不接受 health/discovery 人工强改值；
+// - 真正是否恢复 verified 仍由后续探测和状态机决定。
+type confirmAddressUpdateRequest struct {
+	BaseURL      string `json:"baseUrl"`
+	ClientIP     string `json:"clientIp"`
+	DockerAPIURL string `json:"dockerApiUrl"`
+}
+
 type probeDockerRequest struct {
 	DockerAPIURL string `json:"dockerApiUrl"`
 }
@@ -21,10 +39,10 @@ type probeDockerRequest struct {
 // heartbeatRequest 是 Edge Client 主动上报心跳的最小请求体。
 //
 // 设计来源：
-// - 之前 Node Server 只有 UDP discovery 的被动回写，没有正式的 HTTP 心跳入口；
-// - 用户确认 last_heartbeat_at 应当表达“心跳时间”，但更准确的做法是把“服务端实际收到时间”和
-//   “Client 自报时间”拆开保存；
-// - 因此这个请求体只保留发现域和接入地址等非敏感摘要，不接收任何登录态、proxy 明文、fingerprint raw。
+//   - 之前 Node Server 只有 UDP discovery 的被动回写，没有正式的 HTTP 心跳入口；
+//   - 用户确认 last_heartbeat_at 应当表达“心跳时间”，但更准确的做法是把“服务端实际收到时间”和
+//     “Client 自报时间”拆开保存；
+//   - 因此这个请求体只保留发现域和接入地址等非敏感摘要，不接收任何登录态、proxy 明文、fingerprint raw。
 type heartbeatRequest struct {
 	DiscoveryMagic  string `json:"discoveryMagic"`
 	ProtocolVersion int    `json:"protocolVersion"`

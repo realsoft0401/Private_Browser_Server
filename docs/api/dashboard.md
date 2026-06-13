@@ -17,7 +17,7 @@
 ## 4. 计划统计项
 
 - 节点总数
-- `healthy + verified` 节点数
+- `healthy + verified + online` 节点数
 - 环境包总数
 - `running` 环境包数
 - 失败任务数

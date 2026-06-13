@@ -27,6 +27,7 @@
 - [list-discovered-clients.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/list-discovered-clients.md)
 - [node-detail.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/node-detail.md)
 - [refresh-node-device-info.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/refresh-node-device-info.md)
+- [confirm-node-address-update.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/confirm-node-address-update.md)
 - [verify-node.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/verify-node.md)
 
 ### Browser Envs

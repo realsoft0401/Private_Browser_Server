@@ -52,6 +52,79 @@ X-Platform-Role
 
 Node Server V1 先记录这些 Header 做任务归属和审计，不实时回调 PlatformServer 校验 token。后续 V1.1/V2 再接 `verify-token`。
 
+## ARM Docker 部署口径
+
+当前 `Private_Browser_Server` 已验证可打包为 ARM64 镜像，适合部署在 RK3528 这类轻量控制设备。
+
+完整发版步骤、push、远端 pull/run、验证与排障说明，统一见 [docs/deploy-arm.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/deploy-arm.md)。
+
+### 正式镜像
+
+```text
+crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_node_server:1.0-arm
+```
+
+### 数据挂载
+
+- 宿主机数据目录固定使用 `/Business/data`
+- 容器内数据目录固定使用 `/app/data`
+- 当前 `Settings/config-docker.yaml` 中 SQLite 文件路径为 `/app/data/private_browser_server.db`
+
+这条挂载规则的设计原因是：
+
+- Node Server 镜像本身不内置业务数据库；
+- SQLite、后续上传文件和运维排障数据都必须独立于容器生命周期保留；
+- 重新拉起容器时不允许因为镜像重建丢失中心节点与任务事实。
+
+### 推荐启动命令
+
+```bash
+docker run -d \
+  --name private_browser_node_server \
+  --restart unless-stopped \
+  -p 3400:3400 \
+  -p 43000:43000/udp \
+  -v /Business/data:/app/data \
+  crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_node_server:1.0-arm
+```
+
+这条命令当前作为正式部署口径，职责边界如下：
+
+- `3400/tcp` 是 Node Server HTTP API 与 Swagger/health 入口；
+- `43000/udp` 是 Client beacon 自动发现入口；
+- `/Business/data:/app/data` 只负责持久化 Server 本机数据，不负责任何 Edge 数据目录；
+- 当前明确使用显式 `-p` 映射，而不是 `--network host`，方便 `docker ps`、实施和排障时直接看到端口发布结果。
+
+### 验证命令
+
+```bash
+docker ps --filter name=private_browser_node_server
+curl http://127.0.0.1:3400/health
+```
+
+正常情况下：
+
+- `docker ps` 应显示 `0.0.0.0:3400->3400/tcp`
+- `docker ps` 应显示 `0.0.0.0:43000->43000/udp`
+- `/health` 应返回 `ok=true`
+- `/health` 返回里的 `sqlite.path` 应为 `/app/data/private_browser_server.db`
+
+### 关于 `docker ps` 里 `PORTS` 为空
+
+如果后续有人把容器改成：
+
+```bash
+docker run ... --network host ...
+```
+
+那么 `docker ps` 的 `PORTS` 列会显示为空，这不是端口没开，而是因为容器直接共用宿主机网络栈，Docker 不再显示 `-p` 级别的端口映射。
+
+当前项目不推荐把 Node Server 正式部署口径写成 `--network host`，原因是：
+
+- 实施侧更难一眼看出到底暴露了哪些端口；
+- `docker ps` 和常规运维脚本不容易直接复核映射关系；
+- 当前 Server 只需要 `3400/tcp` 与 `43000/udp`，显式 `-p` 已足够满足部署与发现要求。
+
 ## 2026-06-09 阶段 4 当前落地
 
 - `EdgeClient` 已实现一次性 HTTP JSON 调用、API Key Header、统一响应解析和 Edge 错误映射。

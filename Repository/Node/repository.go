@@ -26,12 +26,13 @@ type Repository struct{}
 func (Repository) Create(ctx context.Context, node *NodeModel.EdgeClient) error {
 	_, err := Rom.DB().ExecContext(ctx, `INSERT INTO edge_clients (
 		id, main_account_id, client_sequence, name, base_url, client_ip, docker_api_url,
-		os, arch, cpu_cores, memory_total_mb, docker_version, health_status, discovery_status,
+		os, arch, cpu_cores, memory_total_mb, docker_version, health_status, discovery_status, discovery_reason, last_discovered_at,
 		last_heartbeat_at, last_heartbeat_reported_at, last_heartbeat_source, last_checked_at, last_error, created_by_user_id, created_by_username,
 		created_at, updated_at, deleted_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		node.ID, node.MainAccountID, node.NodeSequence, node.Name, node.BaseURL, node.ClientIP, node.DockerAPIURL,
 		node.OS, node.Arch, node.CPUCores, node.MemoryTotalMB, node.DockerVersion, node.HealthStatus, node.DiscoveryStatus,
+		node.DiscoveryReason, node.LastDiscoveredAt,
 		node.LastHeartbeatAt, node.LastHeartbeatReportedAt, node.LastHeartbeatSource, node.LastCheckedAt, node.LastError, node.CreatedByUserID, node.CreatedByUsername,
 		node.CreatedAt, node.UpdatedAt, node.DeletedAt,
 	)
@@ -45,7 +46,7 @@ func (Repository) Create(ctx context.Context, node *NodeModel.EdgeClient) error 
 func (Repository) ListByMainAccount(ctx context.Context, mainAccountID string) ([]NodeModel.EdgeClient, error) {
 	rows, err := Rom.DB().QueryContext(ctx, `SELECT
 		id, main_account_id, client_sequence, name, base_url, client_ip, docker_api_url,
-		os, arch, cpu_cores, memory_total_mb, docker_version, health_status, discovery_status,
+		os, arch, cpu_cores, memory_total_mb, docker_version, health_status, discovery_status, discovery_reason, last_discovered_at,
 		last_heartbeat_at, last_heartbeat_reported_at, last_heartbeat_source, last_checked_at, last_error, created_by_user_id, created_by_username,
 		created_at, updated_at, deleted_at
 		FROM edge_clients
@@ -74,7 +75,7 @@ func (Repository) ListByMainAccount(ctx context.Context, mainAccountID string) (
 func (Repository) GetByID(ctx context.Context, mainAccountID string, id string) (*NodeModel.EdgeClient, error) {
 	row := Rom.DB().QueryRowContext(ctx, `SELECT
 		id, main_account_id, client_sequence, name, base_url, client_ip, docker_api_url,
-		os, arch, cpu_cores, memory_total_mb, docker_version, health_status, discovery_status,
+		os, arch, cpu_cores, memory_total_mb, docker_version, health_status, discovery_status, discovery_reason, last_discovered_at,
 		last_heartbeat_at, last_heartbeat_reported_at, last_heartbeat_source, last_checked_at, last_error, created_by_user_id, created_by_username,
 		created_at, updated_at, deleted_at
 		FROM edge_clients
@@ -91,15 +92,15 @@ func (Repository) GetByID(ctx context.Context, mainAccountID string, id string) 
 
 // UpdateDeviceInfo 保存 Docker 2375 探测到的 Edge Client 设备事实。
 //
-// 该方法只更新设备能力摘要和健康字段，不修改 baseUrl/clientIp/mainAccountId，
-// 避免探测过程自动覆盖 clientId 身份，后续 identity_changed/ip_mismatch 规则可继续加在 Service 层。
+// 该方法只更新设备能力摘要、健康字段和当前身份结论；client_ip 也只允许上层先做“空值补齐”后再带进来，
+// 不在 Repository 层自行推断或改写地址事实，避免探测过程自动覆盖 clientId 身份。
 func (Repository) UpdateDeviceInfo(ctx context.Context, node *NodeModel.EdgeClient) error {
 	result, err := Rom.DB().ExecContext(ctx, `UPDATE edge_clients SET
-		os = ?, arch = ?, cpu_cores = ?, memory_total_mb = ?, docker_version = ?,
-		health_status = ?, discovery_status = ?, last_checked_at = ?, last_error = ?, updated_at = ?
+		client_ip = ?, os = ?, arch = ?, cpu_cores = ?, memory_total_mb = ?, docker_version = ?,
+		health_status = ?, discovery_status = ?, discovery_reason = ?, last_checked_at = ?, last_error = ?, updated_at = ?
 		WHERE id = ? AND main_account_id = ? AND deleted_at = 0`,
-		node.OS, node.Arch, node.CPUCores, node.MemoryTotalMB, node.DockerVersion,
-		node.HealthStatus, node.DiscoveryStatus, node.LastCheckedAt, node.LastError, node.UpdatedAt,
+		node.ClientIP, node.OS, node.Arch, node.CPUCores, node.MemoryTotalMB, node.DockerVersion,
+		node.HealthStatus, node.DiscoveryStatus, node.DiscoveryReason, node.LastCheckedAt, node.LastError, node.UpdatedAt,
 		node.ID, node.MainAccountID,
 	)
 	if err != nil {
@@ -121,11 +122,11 @@ func (Repository) UpdateDeviceInfo(ctx context.Context, node *NodeModel.EdgeClie
 // 不调用 HTTP、不判断 heartbeat、不拼业务错误文案，避免把状态机塞进数据库层。
 func (Repository) UpdateVerifyResult(ctx context.Context, node *NodeModel.EdgeClient) error {
 	result, err := Rom.DB().ExecContext(ctx, `UPDATE edge_clients SET
-		os = ?, arch = ?, cpu_cores = ?, memory_total_mb = ?, docker_version = ?,
-		health_status = ?, discovery_status = ?, last_checked_at = ?, last_error = ?, updated_at = ?
+		client_ip = ?, os = ?, arch = ?, cpu_cores = ?, memory_total_mb = ?, docker_version = ?,
+		health_status = ?, discovery_status = ?, discovery_reason = ?, last_checked_at = ?, last_error = ?, updated_at = ?
 		WHERE id = ? AND main_account_id = ? AND deleted_at = 0`,
-		node.OS, node.Arch, node.CPUCores, node.MemoryTotalMB, node.DockerVersion,
-		node.HealthStatus, node.DiscoveryStatus, node.LastCheckedAt, node.LastError, node.UpdatedAt,
+		node.ClientIP, node.OS, node.Arch, node.CPUCores, node.MemoryTotalMB, node.DockerVersion,
+		node.HealthStatus, node.DiscoveryStatus, node.DiscoveryReason, node.LastCheckedAt, node.LastError, node.UpdatedAt,
 		node.ID, node.MainAccountID,
 	)
 	if err != nil {
@@ -134,6 +135,39 @@ func (Repository) UpdateVerifyResult(ctx context.Context, node *NodeModel.EdgeCl
 	affected, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("read update edge_clients verify rows affected failed: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateAddressConfirmResult 保存“管理员确认地址更新”后的最新地址事实和重新探测结果。
+//
+// 设计来源：
+//   - address confirm 是唯一允许正式改写 base_url/docker_api_url/client_ip 的受控入口；
+//   - 该动作必须把“地址更新”和“重新探测后的身份/健康结论”作为同一次中心事实落库，
+//     避免节点地址已变更但状态仍停留在旧记录上；
+//   - Repository 只负责持久化，不判断是否允许确认地址更新。
+func (Repository) UpdateAddressConfirmResult(ctx context.Context, node *NodeModel.EdgeClient) error {
+	result, err := Rom.DB().ExecContext(ctx, `UPDATE edge_clients SET
+		base_url = ?, client_ip = ?, docker_api_url = ?,
+		os = ?, arch = ?, cpu_cores = ?, memory_total_mb = ?, docker_version = ?,
+		health_status = ?, discovery_status = ?, discovery_reason = ?,
+		last_checked_at = ?, last_error = ?, updated_at = ?
+		WHERE id = ? AND main_account_id = ? AND deleted_at = 0`,
+		node.BaseURL, node.ClientIP, node.DockerAPIURL,
+		node.OS, node.Arch, node.CPUCores, node.MemoryTotalMB, node.DockerVersion,
+		node.HealthStatus, node.DiscoveryStatus, node.DiscoveryReason,
+		node.LastCheckedAt, node.LastError, node.UpdatedAt,
+		node.ID, node.MainAccountID,
+	)
+	if err != nil {
+		return fmt.Errorf("update edge_clients address confirm result failed: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read update edge_clients address confirm rows affected failed: %w", err)
 	}
 	if affected == 0 {
 		return ErrNotFound
@@ -220,7 +254,7 @@ func (Repository) GetByHeartbeatLookup(ctx context.Context, baseURL string, clie
 
 	row := Rom.DB().QueryRowContext(ctx, `SELECT
 		id, main_account_id, client_sequence, name, base_url, client_ip, docker_api_url,
-		os, arch, cpu_cores, memory_total_mb, docker_version, health_status, discovery_status,
+		os, arch, cpu_cores, memory_total_mb, docker_version, health_status, discovery_status, discovery_reason, last_discovered_at,
 		last_heartbeat_at, last_heartbeat_reported_at, last_heartbeat_source, last_checked_at, last_error, created_by_user_id, created_by_username,
 		created_at, updated_at, deleted_at
 		FROM edge_clients
@@ -274,7 +308,7 @@ func scanNode(row rowScanner) (NodeModel.EdgeClient, error) {
 	var node NodeModel.EdgeClient
 	err := row.Scan(
 		&node.ID, &node.MainAccountID, &node.NodeSequence, &node.Name, &node.BaseURL, &node.ClientIP, &node.DockerAPIURL,
-		&node.OS, &node.Arch, &node.CPUCores, &node.MemoryTotalMB, &node.DockerVersion, &node.HealthStatus, &node.DiscoveryStatus,
+		&node.OS, &node.Arch, &node.CPUCores, &node.MemoryTotalMB, &node.DockerVersion, &node.HealthStatus, &node.DiscoveryStatus, &node.DiscoveryReason, &node.LastDiscoveredAt,
 		&node.LastHeartbeatAt, &node.LastHeartbeatReportedAt, &node.LastHeartbeatSource, &node.LastCheckedAt, &node.LastError, &node.CreatedByUserID, &node.CreatedByUsername,
 		&node.CreatedAt, &node.UpdatedAt, &node.DeletedAt,
 	)

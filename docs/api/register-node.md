@@ -52,7 +52,7 @@
 - `baseUrl`
 - `dockerApiUrl`
 - `healthStatus=stale`
-- `discoveryStatus=manual`
+- `discoveryStatus=blocked`
 - `arch=unknown`
 
 ## 5. 前置校验

@@ -22,6 +22,7 @@
 - 不自动验证 `/health`
 - 不自动置为 `verified`
 - 不修改 `baseUrl/clientIp`
+- 不清空 `discoveryReason`
 
 ## 4. 请求与响应
 
@@ -56,4 +57,4 @@ POST /api/v1/edge-clients/{clientId}/device-info/refresh
 
 - 成功后 `os/arch/cpuCores/memoryTotalMb/dockerVersion` 会更新
 - 探测失败时 `healthStatus` 应收口到 `unhealthy`
-- 即使 refresh 成功，`discoveryStatus` 也不会自动变成 `verified`
+- 即使 refresh 成功，`discoveryStatus/discoveryReason` 也不会被它偷偷恢复

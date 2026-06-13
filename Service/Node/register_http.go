@@ -80,12 +80,14 @@ func RegisterNode(ctx *gin.Context) {
 		DockerAPIURL:      dockerURL,
 		Arch:              NodeModel.NodeArchUnknown,
 		HealthStatus:      NodeModel.NodeHealthStale,
-		DiscoveryStatus:   NodeModel.NodeDiscoveryManual,
+		DiscoveryStatus:   NodeModel.NodeDiscoveryBlocked,
+		DiscoveryReason:   NodeModel.NodeDiscoveryReasonNone,
 		CreatedByUserID:   platformCtx.UserID,
 		CreatedByUsername: platformCtx.Username,
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
+	fillNodeClientIPIfMissing(node, req.ClientIP)
 	if node.Name == "" {
 		node.Name = "node-" + strconv.Itoa(sequence)
 	}
@@ -98,6 +100,7 @@ func RegisterNode(ctx *gin.Context) {
 		return
 	}
 	attachHeartbeatStatus(node, time.Now().Unix())
+	attachNodeGovernanceActions(node)
 	HttpResponse.ResponseSuccess(ctx, node)
 }
 
@@ -114,6 +117,7 @@ func ListNodes(ctx *gin.Context) {
 		return
 	}
 	attachHeartbeatStatusList(nodes, time.Now().Unix())
+	attachNodeGovernanceActionsList(nodes)
 	HttpResponse.ResponseSuccess(ctx, gin.H{"items": nodes, "total": len(nodes)})
 }
 
@@ -159,6 +163,7 @@ func GetNodeDetail(ctx *gin.Context) {
 		return
 	}
 	attachHeartbeatStatus(node, time.Now().Unix())
+	attachNodeGovernanceActions(node)
 	HttpResponse.ResponseSuccess(ctx, node)
 }
 
@@ -202,7 +207,6 @@ func RefreshNodeDeviceInfo(ctx *gin.Context) {
 	node.MemoryTotalMB = probe.MemoryTotalMB
 	node.DockerVersion = probe.DockerVersion
 	node.HealthStatus = NodeModel.NodeHealthHealthy
-	node.DiscoveryStatus = NodeModel.NodeDiscoveryManual
 	node.LastCheckedAt = probe.CheckedAt
 	node.LastError = ""
 	node.UpdatedAt = probe.CheckedAt
@@ -211,5 +215,6 @@ func RefreshNodeDeviceInfo(ctx *gin.Context) {
 		return
 	}
 	attachHeartbeatStatus(node, time.Now().Unix())
+	attachNodeGovernanceActions(node)
 	HttpResponse.ResponseSuccess(ctx, gin.H{"node": node, "probe": probe})
 }

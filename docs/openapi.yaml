@@ -11,7 +11,7 @@ info:
     目标节点上的 Private_Browser_Client 负责。
 
     当前文档描述的是 Server 对管理端或上层平台开放的中心 API；涉及节点 run/stop/create 等动作时，
-    Server 会先校验目标节点 healthy + verified，再受控代理到对应 Edge API。
+    Server 会先校验目标节点 healthy + verified + online，再受控代理到对应 Edge API。
 
     除 `/health` 和 `text/event-stream` SSE 外，当前业务接口统一返回 HTTP 200，
     调用方必须再结合 JSON `code` / `message` / `data` 判断业务是否成功。
@@ -183,7 +183,7 @@ paths:
       summary: 手动登记 Edge Client 节点
       description: >
         只保存节点接入地址、显示名称和平台归属，不会因为登记成功就自动进入业务可用状态。
-        后续仍需单独执行设备能力刷新和 verify，只有 healthy + verified 才允许承接环境包动作。
+        后续仍需单独执行设备能力刷新和 verify，只有 healthy + verified + online 才允许承接环境包动作。
       parameters:
         - $ref: "#/components/parameters/MainAccountId"
         - $ref: "#/components/parameters/PlatformUserId"
@@ -207,7 +207,9 @@ paths:
       summary: Edge Client 列表
       description: >
         返回当前主账号名下的中心节点索引列表。`heartbeatStatus` 是 Node Server 按阈值动态计算的
-        心跳新鲜度；真正的业务放行仍要同时看 `healthStatus=healthy` 和 `discoveryStatus=verified`。
+        心跳新鲜度；真正的业务放行仍要同时看 `healthStatus=healthy`、`discoveryStatus=verified`
+        和 `heartbeatStatus=online`。其中 `discoveryStatus` 只表达“中心当前是否仍确认这是登记过的那台节点”，
+        不替代健康状态或在线状态。
       parameters:
         - $ref: "#/components/parameters/MainAccountId"
         - $ref: "#/components/parameters/PlatformUserId"
@@ -226,7 +228,8 @@ paths:
       description: >
         返回 UDP beacon 缓存，并按当前主账号已注册的 baseUrl/clientIp 补充 clientId。
         clientId 为空表示尚未绑定；有值表示该发现项已经登记过。该接口只展示发现结果，
-        不自动创建节点，也不代表 verified。
+        不自动创建节点，也不代表 verified。如果发现项里的 clientIp/baseUrl 与已登记节点不一致，
+        也不能自动覆盖正式节点地址，只能作为后续 blocked + ip_mismatch 排查线索。
       parameters:
         - $ref: "#/components/parameters/MainAccountId"
         - $ref: "#/components/parameters/PlatformUserId"
@@ -242,7 +245,10 @@ paths:
     get:
       tags: [Edge Clients]
       summary: Edge Client 详情
-      description: 返回单个 Edge Client 的中心索引详情，便于排查 lastError、heartbeat 和 verify 结果。
+      description: >
+        返回单个 Edge Client 的中心索引详情，便于排查 lastError、heartbeat 和 verify 结果。
+        详情中的 `discoveryStatus` 表达身份连续性，`healthStatus` 表达本机能力健康，
+        `heartbeatStatus` 表达最近在线状态，三者不能混用。
       parameters:
         - name: clientId
           in: path
@@ -268,7 +274,7 @@ paths:
         通过目标节点的 Docker 2375 能力探测刷新中心缓存，
         用于补齐 os、arch、dockerVersion、镜像/容器统计和基础设备摘要。
         当前实现不会主动调用目标 Edge 的 /health 或 /api/v1/edge/device-info，
-        也不会因为刷新成功就自动把节点提升为 verified。
+        也不会因为刷新成功就自动把节点提升为 verified 或清空 discoveryReason。
       parameters:
         - name: clientId
           in: path
@@ -286,6 +292,40 @@ paths:
               schema:
                 $ref: "#/components/schemas/RefreshEdgeClientUnifiedResponse"
 
+  /api/v1/edge-clients/{clientId}/confirm-address-update:
+    post:
+      tags: [Edge Clients]
+      summary: 管理员确认节点地址更新并重新探测
+      description: >
+        该接口只用于处理 `blocked + ip_mismatch` 节点。
+        管理员确认这仍然是原 clientId 对应的同一台机器后，提交新的 baseUrl/clientIp/dockerApiUrl；
+        Server 会保持原 clientId 不变，立即重新执行 heartbeat、Client /health、device-info、Docker 2375
+        和架构校验。全部通过后恢复 `verified`；如果设备事实变化过大，则继续保持 `blocked + device_fact_changed`。
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "9060900010001"
+        - $ref: "#/components/parameters/MainAccountId"
+        - $ref: "#/components/parameters/PlatformUserId"
+        - $ref: "#/components/parameters/PlatformUsername"
+        - $ref: "#/components/parameters/PlatformRole"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmAddressUpdateRequest"
+      responses:
+        "200":
+          description: HTTP 200 + 统一响应包装。成功时恢复 `verified`；失败时返回 `code=1003/1005`，并在 `data.checks` 与 `data.nextAction` 给出原因。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyEdgeClientResponse"
+
   /api/v1/edge-clients/{clientId}/verify:
     post:
       tags: [Edge Clients]
@@ -293,6 +333,7 @@ paths:
       description: >
         按固定顺序检查 UDP 心跳、Client /health、Client device-info、Docker 2375 和架构一致性。
         全部通过后写入 healthStatus=healthy、discoveryStatus=verified；失败时写 lastError，不允许业务放行。
+        如果节点当前已进入 blocked + discoveryReason!= ""，则身份连续性异常不应被普通 verify 自动恢复。
       parameters:
         - name: clientId
           in: path
@@ -318,7 +359,7 @@ paths:
       summary: 在指定 verified 节点创建中心环境包
       description: >
         Node Server 的中心创建入口。调用方只提供 clientId、imagePolicy 和稳定环境参数；
-        Node Server 会先校验目标 Client 已处于 healthy + verified，再按节点 arch 解析真正的 runtime.image，
+        Node Server 会先校验目标 Client 已处于 healthy + verified + online，再按节点 arch 解析真正的 runtime.image，
         然后代理调用 Edge /api/v1/edge/browser-envs，并把中心摘要写入 server_browser_envs。
         server_browser_envs 只是中心缓存和调度视图，真实环境目录、profile、browser-data/profile、
         proxy 和 fingerprint 仍保存在目标 Edge 节点本机。
@@ -988,6 +1029,19 @@ components:
         dockerApiUrl:
           type: string
           example: "http://192.168.10.119:2375"
+    ConfirmAddressUpdateRequest:
+      type: object
+      required: [baseUrl, dockerApiUrl]
+      properties:
+        baseUrl:
+          type: string
+          example: "http://192.168.10.120:3300"
+        clientIp:
+          type: string
+          example: "192.168.10.120"
+        dockerApiUrl:
+          type: string
+          example: "http://192.168.10.120:2375"
     ProbeDockerResponse:
       type: object
       description: 一次性 Docker 2375 探测结果，不会写入数据库。
@@ -1047,6 +1101,8 @@ components:
       description: >
         Node Server 保存的 Edge Client 中心索引。对外统一使用 clientId；
         SQLite 内部使用 edge_clients.id 保存，Client Edge 本身不生成该 ID。
+        其中 discoveryStatus / healthStatus / heartbeatStatus 分别回答“身份是否连续可信”、
+        “本机能力是否健康”、“最近是否在线”，调用方必须分开理解。
       properties:
         clientId:
           type: string
@@ -1086,24 +1142,69 @@ components:
           example: 28.3.3
         healthStatus:
           type: string
+          enum: [healthy, unhealthy, stale, offline]
           example: "healthy"
+          description: >
+            本机能力健康状态。它回答的是 Client /health、device-info、Docker 2375 等本机依赖是否正常，
+            不回答“是不是原来那台节点”，也不回答“最近是否在线”。
         discoveryStatus:
           type: string
-          enum: [manual, verified]
+          enum: [blocked, verified]
           example: "verified"
+          description: >
+            中心节点身份状态。
+            `blocked` 表示节点当前不允许业务放行，具体是“尚未 verify”还是“身份异常待确认”
+            需要继续看 discoveryReason；
+            `verified` 表示中心当前确认这就是登记过的那台节点；
+            正式节点表不再单独保留异常态，而是统一收口到 blocked + discoveryReason。
+        discoveryReason:
+          type: string
+          enum: ["", ip_mismatch, device_fact_changed]
+          example: ""
+          description: >
+            discoveryStatus 的辅助原因字段。
+            空字符串表示当前没有额外身份异常原因；
+            `ip_mismatch` 表示当前发现到的 clientIp/baseUrl 与登记地址不一致；
+            `device_fact_changed` 表示当前探测到的 hostname/os/arch/docker 等设备事实与原记录差异过大。
+        primaryAction:
+          type: string
+          enum: [verify, refresh_device_info, confirm_address_update]
+          example: verify
+          description: >
+            后端给前端节点治理页面提供的主动作建议。
+            `blocked + ""` 时通常是 `verify`；
+            `blocked + ip_mismatch` 时通常是 `confirm_address_update`；
+            如果当前没有明确治理动作建议，则该字段为空或省略。
+        allowedActions:
+          type: array
+          description: >
+            当前节点治理层允许显示的正式动作集合。
+            只包含已经正式落地的 API 动作，不包含“查看详情”“人工排查”这类页面行为。
+          items:
+            type: string
+            enum: [verify, refresh_device_info, confirm_address_update]
+          example: [verify, refresh_device_info]
+        lastDiscoveredAt:
+          type: integer
+          example: 1781063340
+          description: >
+            最近一次通过 UDP discovery 或等价发现流程看到该节点入口的时间。
+            它只表示“最近一次被发现”，不表示 verify 时间，也不表示健康检查时间。
         heartbeatStatus:
           type: string
           enum: [online, stale, offline]
           example: "online"
           description: >
-            根据 lastHeartbeatAt 和 discovery 阈值动态计算，只表示 UDP beacon 新鲜度；
+            根据 lastHeartbeatAt 和 discovery 阈值动态计算，只表示最近心跳是否新鲜；
             不替代 healthStatus，也不表示节点已经 verified。
         lastHeartbeatAt:
           type: integer
           example: 1781063343
+          description: Node Server 最近一次实际收到该节点心跳的服务端时间。
         lastHeartbeatReportedAt:
           type: integer
           example: 1781063342
+          description: Client 在 UDP beacon 或 HTTP heartbeat 中自报的时间，只用于排障。
         lastHeartbeatSource:
           type: string
           enum: [udp, http]
@@ -1229,6 +1330,8 @@ components:
       description: >
         UDP discovery 展示项。clientId 由 Node Server 查询当前主账号已注册 Client 后补充；
         UDP beacon 本身不携带 clientId。前端只需要判断 clientId 是否为空来区分已绑定/未绑定。
+        即使发现项已经能补出 clientId，也只表示“它看起来关联到某条已登记节点记录”，
+        不表示该节点自动恢复为 verified。
       properties:
         clientId:
           type: string

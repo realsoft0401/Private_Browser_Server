@@ -87,7 +87,9 @@ func migrate(conn *sql.DB) error {
 			memory_total_mb INTEGER NOT NULL DEFAULT 0,
 			docker_version TEXT NOT NULL DEFAULT '',
 			health_status TEXT NOT NULL DEFAULT 'stale',
-			discovery_status TEXT NOT NULL DEFAULT 'manual',
+			discovery_status TEXT NOT NULL DEFAULT 'blocked',
+			discovery_reason TEXT NOT NULL DEFAULT '',
+			last_discovered_at INTEGER NOT NULL DEFAULT 0,
 			last_heartbeat_at INTEGER NOT NULL DEFAULT 0,
 			last_heartbeat_reported_at INTEGER NOT NULL DEFAULT 0,
 			last_heartbeat_source TEXT NOT NULL DEFAULT '',
@@ -163,14 +165,21 @@ func migrate(conn *sql.DB) error {
 	return nil
 }
 
-// migrateEdgeClientColumns 给旧版 edge_clients 表补齐新心跳事实字段。
+// migrateEdgeClientColumns 给旧版 edge_clients 表补齐后续状态机需要的新字段。
 //
 // 设计来源：
 // - 当前节点心跳已经拆成“服务端实际收到时间”和“Client 自报时间”两条事实；
-// - 历史 SQLite 里只有 last_heartbeat_at，直接跑新代码会在查询阶段报 no such column；
-// - 这些字段只保存心跳摘要和来源，不改变 health_status/discovery_status 的业务语义。
+// - 新一轮节点身份状态机还需要记录 blocked 的原因和最近发现时间；
+// - 历史 SQLite 缺少这些列时，直接跑新代码会在查询阶段报 no such column。
+//
+// 职责边界：
+// - 这里只补齐列，不在迁移里推断或改写现有业务状态；
+// - 发现原因和发现时间先按空值/0 初始化，后续由 Service/Repository 正常写入；
+// - 只把旧枚举值收口到 blocked，不在这里臆造新的异常原因，避免迁移时误伤现网记录。
 func migrateEdgeClientColumns(conn *sql.DB) error {
 	columns := map[string]string{
+		"discovery_reason":           "TEXT NOT NULL DEFAULT ''",
+		"last_discovered_at":         "INTEGER NOT NULL DEFAULT 0",
 		"last_heartbeat_reported_at": "INTEGER NOT NULL DEFAULT 0",
 		"last_heartbeat_source":      "TEXT NOT NULL DEFAULT ''",
 	}
@@ -185,6 +194,13 @@ func migrateEdgeClientColumns(conn *sql.DB) error {
 		if _, err = conn.Exec(fmt.Sprintf("ALTER TABLE edge_clients ADD COLUMN %s %s", name, definition)); err != nil {
 			return fmt.Errorf("补齐 edge_clients.%s 失败: %w", name, err)
 		}
+	}
+	// 旧版本曾使用 manual / identity_changed / discovered。
+	// 当前收口后正式节点只保留 blocked / verified，原因继续放在 discovery_reason。
+	if _, err := conn.Exec(`UPDATE edge_clients
+		SET discovery_status = 'blocked'
+		WHERE discovery_status IN ('manual', 'identity_changed', 'discovered')`); err != nil {
+		return fmt.Errorf("收口 edge_clients.discovery_status 旧枚举失败: %w", err)
 	}
 	return nil
 }

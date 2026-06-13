@@ -67,6 +67,7 @@ func Setup() *gin.Engine {
 	edgeClients.GET("/discovered", NodeService.ListDiscoveredClients)
 	edgeClients.GET("/:clientId", NodeService.GetNodeDetail)
 	edgeClients.POST("/:clientId/device-info/refresh", NodeService.RefreshNodeDeviceInfo)
+	edgeClients.POST("/:clientId/confirm-address-update", NodeService.ConfirmNodeAddressUpdate)
 	edgeClients.POST("/:clientId/verify", NodeService.VerifyNode)
 
 	envs := business.Group("/envs")

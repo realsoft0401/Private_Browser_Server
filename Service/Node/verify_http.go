@@ -38,47 +38,73 @@ func VerifyNode(ctx *gin.Context) {
 		return
 	}
 
+	checks, failed, healthStatus, message, nextAction := runVerifyChecks(ctx.Request.Context(), node, false)
+	if failed {
+		failVerify(ctx, repo, node, checks, healthStatus, message, nextAction)
+		return
+	}
+	if err = repo.UpdateVerifyResult(ctx.Request.Context(), node); err != nil {
+		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeServerBusy, "保存 verify 成功结果失败: "+err.Error())
+		return
+	}
+	attachNodeGovernanceActions(node)
+	HttpResponse.ResponseSuccess(ctx, verifyResponse{Client: node, Checks: checks})
+}
+
+// runVerifyChecks 统一收口节点 verify 所需的探测顺序和状态写回规则。
+//
+// 设计来源：
+// - verify 与“管理员确认地址更新后重新探测”复用的是同一套链路；
+// - 如果两处各自复制一份 /health、device-info、Docker、arch 校验，很容易出现一边放行、一边拦截；
+// - 因此这里把真正的探测顺序和成功态回写集中在一个 helper，HTTP handler 只负责前后置状态和响应。
+//
+// 职责边界：
+// - 负责执行固定顺序探测并把成功结果回填到 node；
+// - 失败时只返回失败原因和建议，不直接落库；
+// - allowBlockedReason 用于“管理员已显式确认地址更新”的受控重探测场景，此时跳过 discoveryReason 前置拦截。
+func runVerifyChecks(ctx context.Context, node *NodeModel.EdgeClient, allowBlockedReason bool) (map[string]verifyCheck, bool, string, string, string) {
 	checks := make(map[string]verifyCheck)
 	now := time.Now().Unix()
 	attachHeartbeatStatus(node, now)
+	if !allowBlockedReason {
+		if blocked, message, nextAction := discoveryIdentityBlock(node); blocked {
+			checks["discoveryIdentity"] = verifyCheck{Status: "failed", Message: message}
+			return checks, true, node.HealthStatus, message, nextAction
+		}
+	}
 	if node.HeartbeatStatus != NodeModel.NodeHeartbeatOnline {
 		message := fmt.Sprintf("UDP 心跳不是 online，当前 heartbeatStatus=%s，lastHeartbeatAt=%d", node.HeartbeatStatus, node.LastHeartbeatAt)
 		checks["heartbeat"] = verifyCheck{Status: "failed", Message: message}
-		failVerify(ctx, repo, node, checks, NodeModel.NodeHealthStale, message, "请先确认 Client 容器运行、UDP discovery 可达，再重新调用 verify")
-		return
+		return checks, true, NodeModel.NodeHealthStale, message, "请先确认 Client 容器运行、UDP discovery 可达，再重新调用 verify"
 	}
 	checks["heartbeat"] = verifyCheck{Status: "passed", Message: "UDP 心跳在线"}
 
-	health, err := verifyClientHealth(ctx.Request.Context(), node.BaseURL)
+	health, err := verifyClientHealth(ctx, node.BaseURL)
 	if err != nil {
 		message := "Client /health 不可达或返回异常: " + err.Error()
 		checks["clientHealth"] = verifyCheck{Status: "failed", Message: message}
-		failVerify(ctx, repo, node, checks, NodeModel.NodeHealthStale, message, "请检查 baseUrl、3300 端口、防火墙和 Client 服务进程")
-		return
+		return checks, true, NodeModel.NodeHealthStale, message, "请检查 baseUrl、3300 端口、防火墙和 Client 服务进程"
 	}
 	if !health.OK || strings.TrimSpace(health.Status) != NodeModel.NodeHealthHealthy {
 		message := fmt.Sprintf("Client /health 不是 healthy，ok=%v status=%s", health.OK, health.Status)
 		checks["clientHealth"] = verifyCheck{Status: "failed", Message: message}
-		failVerify(ctx, repo, node, checks, NodeModel.NodeHealthUnhealthy, message, "请先修复 Client /health 中失败的 checks")
-		return
+		return checks, true, NodeModel.NodeHealthUnhealthy, message, "请先修复 Client /health 中失败的 checks"
 	}
 	checks["clientHealth"] = verifyCheck{Status: "passed", Message: "Client /health healthy"}
 
-	deviceInfo, err := verifyClientDeviceInfo(ctx.Request.Context(), node.BaseURL)
+	deviceInfo, err := verifyClientDeviceInfo(ctx, node.BaseURL)
 	if err != nil {
 		message := "Client device-info 不可达或解析失败: " + err.Error()
 		checks["clientDeviceInfo"] = verifyCheck{Status: "failed", Message: message}
-		failVerify(ctx, repo, node, checks, NodeModel.NodeHealthUnhealthy, message, "请确认 Client /api/v1/edge/device-info 可用")
-		return
+		return checks, true, NodeModel.NodeHealthUnhealthy, message, "请确认 Client /api/v1/edge/device-info 可用"
 	}
 	checks["clientDeviceInfo"] = verifyCheck{Status: "passed", Message: "Client device-info 可用"}
 
-	probe, err := probeDocker(ctx.Request.Context(), node.DockerAPIURL)
+	probe, err := probeDocker(ctx, node.DockerAPIURL)
 	if err != nil {
 		message := "Docker 2375 探测失败: " + err.Error()
 		checks["docker2375"] = verifyCheck{Status: "failed", Message: message}
-		failVerify(ctx, repo, node, checks, NodeModel.NodeHealthUnhealthy, message, "请检查 dockerApiUrl、Docker daemon 2375、防火墙和内网访问权限")
-		return
+		return checks, true, NodeModel.NodeHealthUnhealthy, message, "请检查 dockerApiUrl、Docker daemon 2375、防火墙和内网访问权限"
 	}
 	checks["docker2375"] = verifyCheck{Status: "passed", Message: "Docker 2375 可用"}
 
@@ -86,14 +112,12 @@ func VerifyNode(ctx *gin.Context) {
 	if probe.Arch == NodeModel.NodeArchUnknown || deviceArch == NodeModel.NodeArchUnknown {
 		message := fmt.Sprintf("架构无法归一化，deviceArch=%s dockerArch=%s", firstNonEmpty(deviceInfo.DeviceArch, deviceInfo.DeviceRawArch), probe.RawArch)
 		checks["arch"] = verifyCheck{Status: "failed", Message: message}
-		failVerify(ctx, repo, node, checks, NodeModel.NodeHealthUnhealthy, message, "请确认 Client 和 Docker 返回 amd64/x86_64 或 arm64/aarch64")
-		return
+		return checks, true, NodeModel.NodeHealthUnhealthy, message, "请确认 Client 和 Docker 返回 amd64/x86_64 或 arm64/aarch64"
 	}
 	if deviceArch != probe.Arch {
 		message := fmt.Sprintf("Client device-info 架构与 Docker 2375 架构不一致，deviceArch=%s dockerArch=%s", deviceArch, probe.Arch)
 		checks["arch"] = verifyCheck{Status: "failed", Message: message}
-		failVerify(ctx, repo, node, checks, NodeModel.NodeHealthUnhealthy, message, "请检查 baseUrl/dockerApiUrl 是否指向同一台 Client 服务器")
-		return
+		return checks, true, NodeModel.NodeHealthUnhealthy, message, "请检查 baseUrl/dockerApiUrl 是否指向同一台 Client 服务器"
 	}
 	checks["arch"] = verifyCheck{Status: "passed", Message: "架构已归一化为 " + probe.Arch}
 
@@ -102,17 +126,15 @@ func VerifyNode(ctx *gin.Context) {
 	node.CPUCores = probe.CPUCores
 	node.MemoryTotalMB = probe.MemoryTotalMB
 	node.DockerVersion = probe.DockerVersion
+	fillNodeClientIPIfMissing(node, "")
 	node.HealthStatus = NodeModel.NodeHealthHealthy
 	node.DiscoveryStatus = NodeModel.NodeDiscoveryVerified
+	node.DiscoveryReason = NodeModel.NodeDiscoveryReasonNone
 	node.LastCheckedAt = now
 	node.LastError = ""
 	node.UpdatedAt = now
 	attachHeartbeatStatus(node, now)
-	if err = repo.UpdateVerifyResult(ctx.Request.Context(), node); err != nil {
-		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeServerBusy, "保存 verify 成功结果失败: "+err.Error())
-		return
-	}
-	HttpResponse.ResponseSuccess(ctx, verifyResponse{Client: node, Checks: checks})
+	return checks, false, "", "", ""
 }
 
 // EnsureClientReadyForBusiness 是所有业务动作前必须复用的 Client 放行校验。
@@ -139,6 +161,12 @@ func EnsureClientReadyForBusiness(ctx context.Context, mainAccountID string, cli
 		return nil, err
 	}
 	attachHeartbeatStatus(node, time.Now().Unix())
+	if blocked, message, nextAction := discoveryIdentityBlock(node); blocked {
+		return nil, &BusinessReadyError{
+			Message:    message,
+			NextAction: nextAction,
+		}
+	}
 	if node.HealthStatus != NodeModel.NodeHealthHealthy {
 		return nil, &BusinessReadyError{
 			Message:    fmt.Sprintf("Client healthStatus=%s，不允许业务动作", node.HealthStatus),
@@ -193,6 +221,7 @@ func failVerify(ctx *gin.Context, repo NodeRepo.Repository, node *NodeModel.Edge
 		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeServerBusy, "保存 verify 失败结果失败: "+err.Error())
 		return
 	}
+	attachNodeGovernanceActions(node)
 	ctx.JSON(http.StatusOK, &HttpResponse.ResponseData{
 		Code: HttpResponse.CodeServerBusy,
 		Msg:  "Client 验证失败: " + message,
