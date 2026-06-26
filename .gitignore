@@ -1,0 +1,10 @@
+.DS_Store
+.idea/
+.gocache/
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+server.log
+private_browser_server
+dist/
+build/

@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Private_Browser 四层架构与中心节点层技术设计</title>
+<style>
+:root{
+  --bg:#f6f8fb;--paper:#ffffff;--text:#172033;--muted:#637083;--soft:#eef4ff;
+  --accent:#1d5fd6;--accent-2:#0f9f9a;--accent-3:#7c4dff;--line:#dfe7f1;
+  --shadow:0 18px 50px rgba(28,52,92,.08);--sidebar-w:282px;
+  --vb:#214f9b;--edge:#0f9f9a;--node:#7c4dff;--platform:#d97706;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;scroll-padding-top:18px}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",Roboto,Arial,sans-serif;background:radial-gradient(circle at top left,#eaf2ff 0,#f6f8fb 34%,#f7f8fb 100%);color:var(--text);line-height:1.78;font-size:15px;display:flex;min-height:100vh}
+::selection{background:var(--accent);color:#fff}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+strong{font-weight:700;color:#101827}
+hr{border:0;border-top:1px solid var(--line);margin:26px 0}
+.progress{position:fixed;inset:0 0 auto 0;height:3px;background:rgba(29,95,214,.08);z-index:210}
+.progress>span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-2),var(--accent-3))}
+.sidebar{position:fixed;inset:0 auto 0 0;width:var(--sidebar-w);background:rgba(255,255,255,.92);border-right:1px solid var(--line);backdrop-filter:blur(12px);z-index:100;display:flex;flex-direction:column;overflow:hidden}
+.sidebar-header{padding:24px 22px 16px;border-bottom:1px solid var(--line)}
+.sidebar-header h2{font-size:15px;line-height:1.35;color:#12376f}
+.sidebar-header .sub{font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-top:4px}
+.sidebar-nav{flex:1;overflow-y:auto;padding:12px 0}
+.sidebar-nav a{display:block;padding:7px 22px;font-size:13px;color:var(--muted);text-decoration:none;border-left:3px solid transparent;transition:.15s}
+.sidebar-nav a:hover,.sidebar-nav a.active{background:#edf4ff;color:var(--accent);border-left-color:var(--accent)}
+.sidebar-nav .sub{padding-left:38px;font-size:12.5px}
+.sidebar-footer{padding:14px 20px;border-top:1px solid var(--line);font-size:11px;color:var(--muted);display:grid;gap:8px}
+.sidebar-footer a{font-size:12px;font-weight:700}
+.main{margin-left:var(--sidebar-w);width:min(1080px,calc(100vw - var(--sidebar-w)));padding:44px 54px 86px}
+.doc-tools{display:flex;justify-content:flex-end;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+.doc-tools a,.doc-tools button{border:1px solid #d7e3f2;background:rgba(255,255,255,.82);backdrop-filter:blur(8px);color:#174a9a;border-radius:999px;padding:8px 14px;font-size:12px;font-weight:800;letter-spacing:.04em;cursor:pointer;box-shadow:0 8px 20px rgba(28,52,92,.05)}
+.main>h1:first-child{font-size:40px;line-height:1.14;margin:0;color:#0e1930}
+.main>h1:first-child:after{content:attr(data-doc-badge);display:block;width:max-content;max-width:100%;margin-top:12px;padding:5px 11px;border-radius:999px;background:#eaf3ff;color:#1d5fd6;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.main>h1:first-child+blockquote{margin:18px 0 22px;border:1px solid #d8e5f4;border-left:0;border-radius:16px;background:linear-gradient(135deg,#ffffff,#f2f8ff);box-shadow:var(--shadow);padding:18px 20px;color:#31405b}
+.main>h1:first-child+blockquote p{margin:0}
+.main>h1:first-child+blockquote strong{display:inline-block;min-width:72px;color:#12376f}
+h2{font-size:25px;line-height:1.28;margin:46px 0 18px;padding-bottom:10px;border-bottom:1px solid var(--line);color:#111c31}
+h3{font-size:18px;margin:30px 0 12px;color:#24314a}
+h4{font-size:15.5px;margin:22px 0 10px;color:#31405b}
+p{margin:9px 0}
+blockquote{border-left:4px solid var(--accent);background:linear-gradient(135deg,#eef5ff,#f8fbff);padding:14px 18px;margin:16px 0;border-radius:0 10px 10px 0;color:#344155;box-shadow:0 1px 0 rgba(31,61,105,.04)}
+pre,code{font-family:"JetBrains Mono","SF Mono",Menlo,Consolas,monospace}
+code{background:#edf3fb;color:#16376d;padding:2px 6px;border-radius:5px;font-size:90%;border:1px solid #dce8f6}
+pre{background:linear-gradient(180deg,#ffffff,#f5f8fc);color:#26364d;border:1px solid #d7e3f2;border-left:0;padding:16px 18px;border-radius:12px;overflow-x:auto;margin:14px 0;line-height:1.62;box-shadow:0 8px 22px rgba(28,52,92,.045);white-space:pre-wrap}
+pre code{background:transparent;border:0;padding:0;color:inherit;font-size:12.8px}
+table{width:100%;border-collapse:separate;border-spacing:0;margin:16px 0;font-size:13.5px;display:block;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(28,52,92,.04)}
+thead{background:#f0f6ff}
+th{text-align:left;padding:11px 14px;color:#174a9a;font-size:12px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;border-bottom:1px solid var(--line)}
+td{padding:10px 14px;border-bottom:1px solid #edf1f6;vertical-align:top}
+tr:last-child td{border-bottom:0}
+tr:nth-child(even) td{background:#fbfdff}
+ul,ol{padding-left:23px;margin:9px 0}
+li{margin:4px 0}
+.arch-board{background:linear-gradient(180deg,#fff,#f8fbff);border:1px solid #d9e5f4;border-radius:18px;padding:26px;box-shadow:0 18px 50px rgba(28,52,92,.08);margin:22px 0 28px;position:relative;overflow:hidden}
+.arch-board:before{content:"";position:absolute;inset:0 0 auto 0;height:5px;background:linear-gradient(90deg,var(--platform),var(--node),var(--edge),var(--vb))}
+.arch-stack{display:grid;gap:16px}
+.layer-card{border-radius:18px;padding:18px 20px;box-shadow:0 14px 32px rgba(28,52,92,.10);position:relative}
+.layer-card.platform{background:linear-gradient(135deg,#b45309,#f59e0b);color:#fff}
+.layer-card.node{background:linear-gradient(135deg,#5b34c9,#7c4dff);color:#fff}
+.layer-card.edge{background:linear-gradient(135deg,#0b7c78,#0f9f9a);color:#fff}
+.layer-card.browser{background:linear-gradient(135deg,#15396f,#1d5fd6);color:#fff}
+.layer-kicker{font-size:11px;text-transform:uppercase;letter-spacing:.14em;font-weight:800;opacity:.84}
+.layer-title{font-size:22px;font-weight:850;margin-top:4px}
+.layer-desc{font-size:13px;opacity:.9;margin-top:6px}
+.layer-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}
+.layer-grid div{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:10px}
+.layer-grid strong{display:block;color:#fff;font-size:13px}
+.layer-grid span{display:block;font-size:12px;opacity:.88;margin-top:2px}
+.arch-arrow{display:flex;justify-content:center;align-items:center;height:18px}
+.arch-arrow:before{content:"";display:block;width:2px;height:18px;background:#9dbbe7}
+.arch-note{margin-top:18px;background:#f7fff9;border:1px solid #ccebd8;border-radius:12px;padding:12px 14px;color:#35586a}
+.summary-grid-table{display:block;border:0;background:transparent;box-shadow:none;overflow:visible;margin:20px 0 26px}
+.summary-grid-table thead{display:none}
+.summary-grid-table tbody{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.summary-grid-table tr{display:block;border:1px solid #dbe6f4;border-radius:14px;background:#fff;box-shadow:0 10px 26px rgba(28,52,92,.06);overflow:hidden}
+.summary-grid-table td{display:block;border:0!important;background:transparent!important;padding:11px 13px}
+.summary-grid-table td:first-child{font-size:12px;font-weight:850;color:#1d5fd6;text-transform:uppercase;letter-spacing:.04em;padding-bottom:2px}
+.summary-grid-table td+td{font-size:13px;color:#24314a;line-height:1.55;padding-top:2px}
+.bridge-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:18px 0}
+.bridge-card{background:#fff;border:1px solid #dbe6f4;border-radius:16px;padding:16px;box-shadow:0 10px 26px rgba(28,52,92,.06)}
+.bridge-card h4{margin-top:0}
+.pill-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.pill{padding:5px 10px;border-radius:999px;font-size:12px;font-weight:800}
+.pill.vb{background:#e8f0ff;color:#1d5fd6}
+.pill.edge{background:#dffaf6;color:#0f7e79}
+.pill.node{background:#efe9ff;color:#6b42f0}
+.pill.platform{background:#fff1d8;color:#b45309}
+.matrix-note{background:#f5f9ff;border:1px solid #dce8f6;border-radius:14px;padding:14px 16px;margin:16px 0;color:#38506d}
+.flow-stack{display:grid;gap:16px;margin:18px 0}
+.flow-card{background:#fff;border:1px solid #dbe6f4;border-radius:18px;padding:18px;box-shadow:0 10px 26px rgba(28,52,92,.06)}
+.flow-card h3{margin:0 0 12px 0}
+.flow-line{background:linear-gradient(90deg,#fff4e8,#f6efff,#effdfa,#edf4ff);border:1px solid #dbe6f4;border-radius:16px;padding:18px 16px;text-align:center;font-weight:800;color:#1d3354}
+.flow-line code{font-size:13px}
+.flow-line .arrow{display:inline-block;margin:0 8px;color:#6b7f9b}
+.flow-rule-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.flow-rule{background:#f8fbff;border:1px solid #dfe8f5;border-radius:14px;padding:14px}
+.flow-rule strong{display:block;margin-bottom:6px;color:#133a72}
+.process-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:18px 0}
+.process-card{background:#fff;border:1px solid #dbe6f4;border-radius:18px;padding:18px;box-shadow:0 10px 26px rgba(28,52,92,.06)}
+.process-card h3{margin:0 0 12px 0}
+.process-card ol{margin:0;padding-left:18px}
+.process-card li{margin:7px 0;font-size:13px;line-height:1.65}
+.process-card .meta{margin-top:12px;padding:10px 12px;border-radius:12px;background:#f6f9fd;border:1px solid #dfe8f5;color:#3a4c65;font-size:13px}
+.sequence-stack{display:grid;gap:18px;margin:18px 0}
+.sequence-card{background:#fff;border:1px solid #dbe6f4;border-radius:18px;padding:18px;box-shadow:0 12px 28px rgba(28,52,92,.06)}
+.sequence-card h3{margin:0 0 14px 0}
+.sequence-lanes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.sequence-lane{background:#f8fbff;border:1px solid #dfe8f5;border-radius:14px;padding:12px}
+.sequence-lane.platform{background:linear-gradient(180deg,#fff7ed,#fff);border-color:#f6d6a7}
+.sequence-lane.node{background:linear-gradient(180deg,#f6f0ff,#fff);border-color:#dfcffd}
+.sequence-lane.edge{background:linear-gradient(180deg,#effdfa,#fff);border-color:#c8efe8}
+.sequence-lane.browser{background:linear-gradient(180deg,#edf4ff,#fff);border-color:#cfe1f7}
+.sequence-lane h4{margin:0 0 10px 0;font-size:13px}
+.sequence-lane ol{margin:0;padding-left:18px}
+.sequence-lane li{margin:7px 0;font-size:13px;line-height:1.6}
+.sequence-foot{margin-top:12px;padding:10px 12px;border-radius:12px;background:#f6f9fd;border:1px solid #dfe8f5;color:#3a4c65;font-size:13px}
+.appendix-heading{margin-top:62px;border-top:1px solid #dfe7f1;padding-top:22px}
+.appendix-heading:before{content:"Technical appendix";display:block;width:max-content;margin-bottom:8px;padding:4px 10px;border-radius:999px;background:#f3f7fc;color:#637083;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+.back-to-top{position:fixed;bottom:28px;right:28px;width:42px;height:42px;background:var(--accent);color:#fff;border:0;border-radius:50%;font-size:20px;cursor:pointer;box-shadow:0 8px 24px rgba(29,95,214,.34);z-index:50;opacity:0;pointer-events:none;transition:.25s}
+.back-to-top.visible{opacity:1;pointer-events:auto}
+.back-to-top:hover{transform:translateY(-2px)}
+.menu-toggle{display:none;position:fixed;top:14px;left:14px;z-index:200;width:40px;height:40px;background:var(--accent);color:#fff;border:0;border-radius:10px;font-size:20px;cursor:pointer}
+.overlay{display:none;position:fixed;inset:0;background:rgba(15,23,42,.36);z-index:99}
+@media(max-width:900px){
+  .sidebar{transform:translateX(-100%);transition:.25s}
+  .sidebar.open{transform:translateX(0)}
+  .main{margin-left:0;width:100%;padding:72px 18px 70px}
+  .menu-toggle{display:flex;align-items:center;justify-content:center}
+  .overlay.open{display:block}
+  .layer-grid,.summary-grid-table tbody,.bridge-grid,.sequence-lanes,.flow-rule-list,.process-grid{grid-template-columns:1fr}
+  .main>h1:first-child{font-size:30px}
+  h2{font-size:21px}
+  table{font-size:12.5px}
+  .doc-tools{justify-content:flex-start}
+}
+@media print{
+  body{background:#fff;display:block}
+  .sidebar,.menu-toggle,.back-to-top,.overlay,.doc-tools,.progress{display:none!important}
+  .main{margin:0;width:100%;max-width:none;padding:0 18px}
+  .arch-board,table,pre{box-shadow:none;page-break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<div class="progress"><span id="progressValue"></span></div>
+<button class="menu-toggle" onclick="toggleMenu()">☰</button>
+<div class="overlay" onclick="toggleMenu(true)"></div>
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h2>四层架构与中心节点层技术设计</h2>
+    <div class="sub">Technical design dossier</div>
+  </div>
+  <nav class="sidebar-nav">
+    <a href="#overview">文档目标</a>
+    <a href="#basis">设计依据</a>
+    <a href="#architecture">四层架构</a>
+    <a class="sub" href="#layer-browser">Virtual Browser</a>
+    <a class="sub" href="#layer-edge">Edge Client</a>
+    <a class="sub" href="#layer-node">Node Server</a>
+    <a class="sub" href="#layer-platform">Platform Server</a>
+    <a href="#app-relations">四层应用关系</a>
+    <a href="#data-relations">四层数据关系</a>
+    <a href="#state-relations">四层状态关系</a>
+    <a href="#call-relations">四层调用关系</a>
+    <a href="#boundary">四层责任边界</a>
+    <a href="#node-position">Node Server P0 定位</a>
+    <a href="#node-flows">Node Server P0 应用流程</a>
+    <a href="#node-models">Node Server P0 数据模型</a>
+    <a href="#node-status">Node Server P0 状态设计</a>
+    <a href="#interfaces">四层接口归属表</a>
+    <a href="#databases">四层数据库归属表</a>
+    <a href="#sequences">关键时序</a>
+    <a href="#implementation">P0 技术实现落地建议</a>
+    <a href="#acceptance">逐层验收口径</a>
+    <a href="#conclusion">结论</a>
+  </nav>
+  <div class="sidebar-footer">
+    <div>Updated from Markdown · 2026-06-24</div>
+    <a href="server-v1-central-node-technical-design.md">查看 Markdown 源文档</a>
+  </div>
+</aside>
+<main class="main">
+  <div class="doc-tools">
+    <a href="server-v1-central-node-technical-design.md">Markdown 源稿</a>
+    <button type="button" onclick="window.print()">打印 / 导出 PDF</button>
+  </div>
+  <h1 data-doc-badge="System architecture design" id="overview">Private_Browser 四层架构与中心节点层技术设计</h1>
+  <blockquote>
+    <p><strong>版本</strong>：v1.0<br>
+    <strong>日期</strong>：2026-06-24<br>
+    <strong>适用范围</strong>：Node Server P0 / 四层架构评审</p>
+  </blockquote>
+
+  <table class="summary-grid-table">
+    <thead><tr><th>项</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>对象</td><td>Virtual Browser / Edge Client / Node Server / Platform Server</td></tr>
+      <tr><td>核心目标</td><td>定义四层职责边界、数据归属、状态归属、调用关系和 Node P0 技术定位</td></tr>
+      <tr><td>关键约束</td><td>同一份核心事实只允许存在一个真相源层</td></tr>
+      <tr><td>结果要求</td><td>为节点治理、run 准入、平台额度和后续 env 生命周期提供稳定前提</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+  <h2 id="basis">设计依据</h2>
+  <ul>
+    <li><a href="/Users/lining/Documents/Browser_virtualization/AGENTS.md">AGENTS.md</a></li>
+    <li><a href="/Users/lining/Documents/Browser_virtualization/project.md">project.md</a></li>
+    <li><a href="/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-central-node-layer-breakdown.md">server-v1-central-node-layer-breakdown.md</a></li>
+    <li><a href="/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-database-design.md">server-v1-database-design.md</a></li>
+    <li><a href="/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-open-questions.md">server-v1-open-questions.md</a></li>
+  </ul>
+  <blockquote>
+    <p><strong>不参考</strong>：old 历史库存。</p>
+  </blockquote>
+
+  <hr>
+  <h2 id="architecture">四层架构</h2>
+  <div class="arch-board">
+    <div class="arch-stack">
+      <div class="layer-card platform" id="layer-platform">
+        <div class="layer-kicker">Layer 1</div>
+        <div class="layer-title">Platform Server</div>
+        <div class="layer-desc">商业与平台规则层，负责主账号、商业归属、额度真相、平台放行规则和平台级审计。</div>
+        <div class="layer-grid">
+          <div><strong>层职责</strong><span>主账号体系 / 商业设备归属 / 平台额度真相</span></div>
+          <div><strong>直接管理对象</strong><span>账号 / 商业机位 / 规则 / 平台审计</span></div>
+          <div><strong>不直接持有</strong><span>Edge 资产正文 / Virtual Browser 运行细节</span></div>
+        </div>
+      </div>
+      <div class="arch-arrow"></div>
+      <div class="layer-card node" id="layer-node">
+        <div class="layer-kicker">Layer 2</div>
+        <div class="layer-title">Node Server</div>
+        <div class="layer-desc">中心节点治理层，负责节点发现、probe、bind/unbind、health/discovery 收口、节点审计和额度快照。</div>
+        <div class="layer-grid">
+          <div><strong>层职责</strong><span>节点中心身份 / 节点归属治理 / 中心任务事实</span></div>
+          <div><strong>直接管理对象</strong><span>Edge Client 节点集合 / edge_clients / bind logs</span></div>
+          <div><strong>不直接持有</strong><span>Edge 本机资产正文 / Virtual Browser 内部运行正文</span></div>
+        </div>
+      </div>
+      <div class="arch-arrow"></div>
+      <div class="layer-card edge" id="layer-edge">
+        <div class="layer-kicker">Layer 3</div>
+        <div class="layer-title">Edge Client</div>
+        <div class="layer-desc">边缘执行层，负责本机 Docker、slot、browser-env、本机健康与对 Virtual Browser 的生命周期管理。</div>
+        <div class="layer-grid">
+          <div><strong>层职责</strong><span>本机事实 / 本机执行 / 受控边缘 API</span></div>
+          <div><strong>直接管理对象</strong><span>Docker / slot / browser-env / profile / proxy / fingerprint</span></div>
+          <div><strong>不承担</strong><span>多节点治理 / 商业归属最终真相 / 平台额度最终真相</span></div>
+        </div>
+      </div>
+      <div class="arch-arrow"></div>
+      <div class="layer-card browser" id="layer-browser">
+        <div class="layer-kicker">Layer 4</div>
+        <div class="layer-title">Virtual Browser</div>
+        <div class="layer-desc">浏览器运行层，负责容器内 Chromium 运行、CDP/VNC 能力、容器内运行时环境和最终执行事实。</div>
+        <div class="layer-grid">
+          <div><strong>层职责</strong><span>浏览器实际运行 / CDP / VNC / 镜像 contract 执行结果</span></div>
+          <div><strong>直接管理对象</strong><span>浏览器容器 / 浏览器进程 / 容器内运行时环境</span></div>
+          <div><strong>不承担</strong><span>clientId / 商业归属 / 平台额度 / 中心治理状态</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="arch-note">
+      <strong>分层原则：</strong>按职责层级分层，不按代码量分层；同一份核心事实只允许存在一个真相源层；上层不直接绕过中间层访问下层真相源。
+    </div>
+  </div>
+
+  <hr>
+  <h2 id="app-relations">四层应用关系</h2>
+  <div class="bridge-grid">
+    <div class="bridge-card">
+      <h4>Virtual Browser ↔ Edge Client</h4>
+      <p>Virtual Browser 提供浏览器运行事实；Edge Client 管理并封装浏览器运行单元。</p>
+      <div class="pill-row">
+        <span class="pill vb">容器存在性</span>
+        <span class="pill vb">CDP / VNC 可连</span>
+        <span class="pill edge">load env</span>
+        <span class="pill edge">start / stop / release</span>
+      </div>
+    </div>
+    <div class="bridge-card">
+      <h4>Edge Client ↔ Node Server</h4>
+      <p>Edge Client 提供本机能力；Node Server 编排和治理本机能力。</p>
+      <div class="pill-row">
+        <span class="pill edge">/health</span>
+        <span class="pill edge">device-info</span>
+        <span class="pill node">bind / unbind</span>
+        <span class="pill node">health / discovery</span>
+      </div>
+    </div>
+    <div class="bridge-card">
+      <h4>Node Server ↔ Platform Server</h4>
+      <p>Node Server 负责节点中心治理；Platform Server 负责商业归属、额度真相和平台放行规则。</p>
+      <div class="pill-row">
+        <span class="pill node">clientId</span>
+        <span class="pill node">节点摘要</span>
+        <span class="pill platform">额度下发</span>
+        <span class="pill platform">放行规则</span>
+      </div>
+    </div>
+    <div class="bridge-card">
+      <h4>禁止直接链路</h4>
+      <ul>
+        <li>Platform Server 不直接调用 Edge Client</li>
+        <li>Platform Server 不直接调用 Virtual Browser</li>
+        <li>Node Server 不直接治理浏览器进程</li>
+        <li>Edge Client 不直接主导商业 clientId 和平台额度</li>
+      </ul>
+    </div>
+  </div>
+
+  <hr>
+  <h2 id="data-relations">四层数据关系</h2>
+  <p>核心约束：同一份数据不得在四层同时作为真相源。</p>
+  <table>
+    <thead>
+      <tr><th>数据对象</th><th>Virtual Browser</th><th>Edge Client</th><th>Node Server</th><th>Platform Server</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>浏览器进程运行事实</td><td>真相源</td><td>管理并摘要</td><td>不直接持有</td><td>不持有</td></tr>
+      <tr><td>CDP/VNC 可用性</td><td>真相源</td><td>摘要与管理</td><td>摘要引用</td><td>不持有</td></tr>
+      <tr><td>本机设备事实</td><td>不持有</td><td>真相源</td><td>摘要缓存</td><td>不持有或极简摘要</td></tr>
+      <tr><td>slot 状态</td><td>运行承载事实</td><td>真相源</td><td>只保存引用摘要</td><td>不持有</td></tr>
+      <tr><td>browser-env 目录与登录态</td><td>运行加载态</td><td>真相源</td><td>聚合摘要</td><td>不持有</td></tr>
+      <tr><td>节点中心身份 clientId</td><td>不生成</td><td>不主导</td><td>真相源</td><td>接收并引用</td></tr>
+      <tr><td>平台额度</td><td>不生成</td><td>不生成</td><td>快照缓存</td><td>真相源</td></tr>
+      <tr><td>中心任务事实</td><td>不保存</td><td>不保存</td><td>真相源</td><td>可引用摘要</td></tr>
+    </tbody>
+  </table>
+  <div class="matrix-note">
+    Node Server 只保存中心索引与治理摘要，不保存 Edge 本机资产正文，也不保存 Virtual Browser 容器内部运行正文。
+  </div>
+
+  <hr>
+  <h2 id="state-relations">四层状态关系</h2>
+  <table>
+    <thead>
+      <tr><th>层</th><th>状态类型</th><th>典型状态</th><th>说明</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Virtual Browser</td><td>浏览器运行状态</td><td>容器存在 / running / CDP 可连 / VNC 可连</td><td>只表达运行事实</td></tr>
+      <tr><td>Edge Client</td><td>边缘本机状态</td><td>/health、本机 Docker、slot、browser-env 生命周期</td><td>只表达本机事实</td></tr>
+      <tr><td>Node Server</td><td>中心治理状态</td><td><code>healthy / unhealthy / stale / offline</code>；<code>verified / blocked</code></td><td>表达节点治理判断</td></tr>
+      <tr><td>Platform Server</td><td>商业状态</td><td>归属有效 / 额度有效 / 平台放行</td><td>表达商业与平台规则结论</td></tr>
+    </tbody>
+  </table>
+  <h3>需要明确区分的状态关系</h3>
+  <ul>
+    <li>Client <code>/health</code> 不等同于 Node <code>health_status</code>。</li>
+    <li>Node <code>verified</code> 不等同于 Platform 放行。</li>
+    <li>Virtual Browser 容器 running 不等同于平台业务可用。</li>
+    <li>Virtual Browser 可连接不等同于 Edge Client 健康。</li>
+    <li>Edge Client 健康不等同于 Node 节点可放行。</li>
+  </ul>
+
+  <hr>
+  <h2 id="call-relations">四层调用关系</h2>
+  <div class="flow-stack">
+    <div class="flow-card">
+      <h3>正式主链</h3>
+      <div class="flow-line">
+        <code>Platform Server</code>
+        <span class="arrow">→</span>
+        <code>Node Server</code>
+        <span class="arrow">→</span>
+        <code>Edge Client</code>
+        <span class="arrow">→</span>
+        <code>Virtual Browser</code>
+      </div>
+      <div class="flow-rule-list">
+        <div class="flow-rule">
+          <strong>主链语义</strong>
+          Platform 定义商业规则，Node 收口治理与准入，Edge 负责本机执行，Virtual Browser 负责实际浏览器运行。
+        </div>
+        <div class="flow-rule">
+          <strong>执行原则</strong>
+          上层不直接绕过中间层调用下层真相源，不直接跨层写入运行事实。
+        </div>
+      </div>
+    </div>
+    <div class="flow-card">
+      <h3>反向事实上报链</h3>
+      <div class="flow-line">
+        <code>Virtual Browser</code>
+        <span class="arrow">→</span>
+        <code>Edge Client</code>
+        <span class="arrow">→</span>
+        <code>Node Server</code>
+        <span class="arrow">→</span>
+        <code>Platform Server</code>
+      </div>
+      <div class="flow-rule-list">
+        <div class="flow-rule">
+          <strong>事实上收规则</strong>
+          Virtual Browser 的运行事实先由 Edge 吸收，再由 Node 汇总为中心节点摘要，最后按平台需要上送。
+        </div>
+        <div class="flow-rule">
+          <strong>禁止事项</strong>
+          Virtual Browser 不直接越层上报 Platform；Platform 不直接抓取 Edge 或浏览器运行正文。
+        </div>
+      </div>
+    </div>
+    <div class="flow-card">
+      <h3>禁止调用链</h3>
+      <table>
+        <thead>
+          <tr><th>禁止链路</th><th>禁止原因</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>Platform Server → Edge Client</code></td><td>绕过节点治理层，破坏中心审计与归属收口。</td></tr>
+          <tr><td><code>Platform Server → Virtual Browser</code></td><td>商业规则层不应直接触达浏览器运行层。</td></tr>
+          <tr><td><code>Node Server → Virtual Browser 内部细节</code></td><td>Node 治理对象是节点，不是浏览器进程。</td></tr>
+          <tr><td><code>Node Server → Edge 本机资产正文</code></td><td>破坏本机资产真相源与安全边界。</td></tr>
+          <tr><td><code>Edge Client → Platform clientId/额度真相</code></td><td>Edge 不主导商业身份与商业规则。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <hr>
+  <h2 id="boundary">四层责任边界</h2>
+  <table>
+    <thead>
+      <tr><th>层</th><th>负责</th><th>不负责</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Virtual Browser</td><td>实际浏览器运行、CDP/VNC 结果、容器运行事实</td><td>账号归属、平台额度、中心审计</td></tr>
+      <tr><td>Edge Client</td><td>本机事实、本机执行、边缘 API、Virtual Browser 生命周期</td><td>多节点治理、商业归属、平台额度真相</td></tr>
+      <tr><td>Node Server</td><td>节点身份、节点归属治理、节点发现与验证、health/discovery 收口、中心任务与审计</td><td>本机资产正文、Virtual Browser 运行细节真相、平台额度最终规则</td></tr>
+      <tr><td>Platform Server</td><td>商业主账号、商业设备归属、平台额度真相、平台审计与规则</td><td>边缘本机执行细节、Edge 资产操作、Virtual Browser 运行细节</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+  <h2 id="node-position">Node Server P0 在四层中的位置</h2>
+  <p><code>Node Server P0</code> 在四层中属于中间治理枢纽层。</p>
+  <table>
+    <thead>
+      <tr><th>属性</th><th>定义</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>转译层</td><td>将 Edge 的本机事实和 Virtual Browser 运行摘要转成中心可治理的节点事实</td></tr>
+      <tr><td>治理层</td><td>承接 bind / unbind / probe / health / discovery 收口</td></tr>
+      <tr><td>缓冲层</td><td>承接 Platform 商业规则与额度快照</td></tr>
+      <tr><td>收口层</td><td>为后续 run 准入、env 生命周期和平台放行提供前置判断</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+  <h2 id="node-flows">Node Server P0 应用流程</h2>
+  <div class="process-grid">
+    <div class="process-card">
+      <h3>自动发现流程</h3>
+      <ol>
+        <li>Edge Client 发送 UDP beacon。</li>
+        <li>Node Server 接收 beacon 并校验平台字段。</li>
+        <li>Node Server 调用 <code>/health</code>。</li>
+        <li>Node Server 调用 <code>/api/v1/edge/device-info</code>。</li>
+        <li>Node Server 建立 discovered 内存视图。</li>
+        <li>命中已登记节点时回写最近发现与探测摘要。</li>
+      </ol>
+      <div class="meta">
+        <strong>收口：</strong> discovery 只形成发现态线索，不直接形成正式绑定节点。
+      </div>
+    </div>
+    <div class="process-card">
+      <h3>bind 流程</h3>
+      <ol>
+        <li>Platform 或管理员发起 bind。</li>
+        <li>Node Server probe 目标 Edge。</li>
+        <li>Node Server 执行查重与跨账号占用校验。</li>
+        <li>Node Server 分配 <code>clientId</code>。</li>
+        <li>Node Server 写入 <code>edge_clients</code>。</li>
+        <li>Node Server 写入 bind 审计。</li>
+        <li>Node Server 兼容 push <code>clientId</code> 到 Edge。</li>
+        <li>Node Server 返回 bind 结果与节点摘要。</li>
+      </ol>
+      <div class="meta">
+        <strong>收口：</strong> bind 成功后节点进入正式中心身份管理；push 失败不回滚中心 bind。
+      </div>
+    </div>
+    <div class="process-card">
+      <h3>unbind 流程</h3>
+      <ol>
+        <li>Platform 或管理员发起 unbind。</li>
+        <li>Node Server 校验节点存在且当前已绑定。</li>
+        <li>Node Server 解除中心归属。</li>
+        <li>Node Server 写入 unbind 审计。</li>
+        <li>Node Server 调用 Edge 清空本地 <code>node-registration.json</code>。</li>
+        <li>清理失败时写入错误摘要与审计留痕。</li>
+      </ol>
+      <div class="meta">
+        <strong>收口：</strong> unbind 解除归属，不销毁原 <code>clientId</code>，不删除历史任务与审计。
+      </div>
+    </div>
+    <div class="process-card">
+      <h3>heartbeat / health 收口流程</h3>
+      <ol>
+        <li>Edge Client 发送 heartbeat。</li>
+        <li>Node Server 更新心跳摘要。</li>
+        <li>Node Server 刷新 discovered 视图。</li>
+        <li>Node Server 按阈值推进 <code>health_status</code>。</li>
+        <li>必要时再次 probe 并修正治理状态。</li>
+      </ol>
+      <div class="meta">
+        <strong>收口：</strong> heartbeat 提供活性事实；最终中心可用性由 Node Server 统一计算，不直接等同于 Edge <code>/health</code>。
+      </div>
+    </div>
+  </div>
+
+  <hr>
+  <h2 id="node-models">Node Server P0 数据模型</h2>
+  <table>
+    <thead>
+      <tr><th>模型</th><th>定位</th><th>表达内容</th><th>不表达内容</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>edge_clients</code></td><td>正式节点真相表</td><td>节点身份、归属、治理状态、发现/心跳/探测结果</td><td>slot 真相、browser-env 目录真相、额度真相、Virtual Browser 正文</td></tr>
+      <tr><td><code>edge_client_bind_logs</code></td><td>归属治理审计表</td><td>bind、unbind、地址、push/clear 本地登记结果</td><td>业务运行正文</td></tr>
+      <tr><td><code>server_tasks</code></td><td>中心任务真相表</td><td>bind、unbind、recheck</td><td>Edge 长期任务历史</td></tr>
+      <tr><td><code>client_run_quotas</code></td><td>额度快照容器</td><td>Platform 下发到 Node 的额度摘要</td><td>平台额度最终真相</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+  <h2 id="node-status">Node Server P0 状态设计</h2>
+  <h3><code>health_status</code></h3>
+  <ul>
+    <li><code>healthy</code></li>
+    <li><code>unhealthy</code></li>
+    <li><code>stale</code></li>
+    <li><code>offline</code></li>
+  </ul>
+  <h3><code>discovery_status</code></h3>
+  <ul>
+    <li><code>verified</code></li>
+    <li><code>blocked</code></li>
+  </ul>
+  <h3><code>discovery_reason</code></h3>
+  <ul>
+    <li><code>not_bound</code></li>
+    <li><code>probe_failed</code></li>
+    <li><code>ip_mismatch</code></li>
+    <li><code>identity_changed</code></li>
+    <li><code>stale</code></li>
+  </ul>
+  <blockquote>
+    <p><strong>设计约束</strong>：主状态少而稳；细原因落 <code>reason</code>；<code>identity_changed</code>、<code>ip_mismatch</code>、<code>discovered</code> 不进入正式主状态枚举。</p>
+  </blockquote>
+
+  <hr>
+  <h2 id="interfaces">四层接口归属表</h2>
+  <h3>Virtual Browser 层</h3>
+  <table>
+    <thead><tr><th>能力</th><th>归属层</th><th>对上暴露方式</th></tr></thead>
+    <tbody>
+      <tr><td>浏览器进程启动</td><td>Virtual Browser</td><td>由 Edge Client run 封装</td></tr>
+      <tr><td>浏览器进程停止</td><td>Virtual Browser</td><td>由 Edge Client stop 封装</td></tr>
+      <tr><td>CDP 可连</td><td>Virtual Browser</td><td>由 Edge Client 提供摘要或测试结果</td></tr>
+      <tr><td>VNC / WebVNC 可连</td><td>Virtual Browser</td><td>由 Edge Client 提供地址与可用性摘要</td></tr>
+    </tbody>
+  </table>
+  <h3>Edge Client 层</h3>
+  <table>
+    <thead><tr><th>接口或能力</th><th>归属层</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>/health</code></td><td>Edge Client</td><td>本机健康事实</td></tr>
+      <tr><td><code>/api/v1/edge/device-info</code></td><td>Edge Client</td><td>本机设备与 Docker 摘要</td></tr>
+      <tr><td>discovery / heartbeat</td><td>Edge Client</td><td>向 Node 上报发现与活性事实</td></tr>
+      <tr><td><code>/api/v1/edge/docker/*</code></td><td>Edge Client</td><td>本机 Docker 管理能力</td></tr>
+      <tr><td><code>/api/v1/edge/slots/*</code></td><td>Edge Client</td><td>本机 slot 管理真相</td></tr>
+      <tr><td><code>/api/v1/edge/browser-envs/*</code></td><td>Edge Client</td><td>browser-env 生命周期主入口</td></tr>
+    </tbody>
+  </table>
+  <h3>Node Server 层</h3>
+  <table>
+    <thead><tr><th>接口或能力</th><th>归属层</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>/api/v1/edge-clients/discovered</code></td><td>Node Server</td><td>发现态临时视图</td></tr>
+      <tr><td><code>/api/v1/edge-clients/bind</code></td><td>Node Server</td><td>节点正式绑定</td></tr>
+      <tr><td><code>/api/v1/edge-clients/{clientId}/unbind</code></td><td>Node Server</td><td>节点正式解绑</td></tr>
+      <tr><td><code>/api/v1/edge-clients/{clientId}/recheck</code></td><td>Node Server</td><td>节点治理重探测</td></tr>
+      <tr><td><code>/api/v1/edge-clients</code></td><td>Node Server</td><td>中心节点列表</td></tr>
+      <tr><td><code>/api/v1/server-tasks/{taskId}</code></td><td>Node Server</td><td>中心任务事实查询</td></tr>
+    </tbody>
+  </table>
+  <h3>Platform Server 层</h3>
+  <table>
+    <thead><tr><th>接口或能力</th><th>归属层</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>主账号管理接口</td><td>Platform Server</td><td>平台账号真相</td></tr>
+      <tr><td>商业设备归属接口</td><td>Platform Server</td><td>归属规则真相</td></tr>
+      <tr><td>额度下发接口</td><td>Platform Server</td><td>运行额度真相</td></tr>
+      <tr><td>平台放行接口</td><td>Platform Server</td><td>平台产品规则与商业准入</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+  <h2 id="databases">四层数据库归属表</h2>
+  <table>
+    <thead>
+      <tr><th>层</th><th>数据类别</th><th>表或存储</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Virtual Browser</td><td>浏览器进程运行态 / CDP-VNC 即时可用性 / 容器临时运行环境</td><td>容器运行时 / 进程内存态 / 容器临时文件</td></tr>
+      <tr><td>Edge Client</td><td>设备信息摘要 / Docker 事实 / slot 真相 / browser-env 资产 / profile 等原子材料</td><td>本机目录 + 本机 SQLite + Docker API 实时事实</td></tr>
+      <tr><td>Node Server</td><td>节点中心身份 / bind 审计 / 中心任务 / 额度快照 / env 聚合摘要 / discovered 临时视图</td><td><code>edge_clients</code> / <code>edge_client_bind_logs</code> / <code>server_tasks</code> / <code>client_run_quotas</code> / <code>server_browser_envs</code> / 内存态</td></tr>
+      <tr><td>Platform Server</td><td>主账号真相 / 商业设备归属真相 / 平台额度真相 / 平台级审计 / 规则缓存</td><td>平台账号表 / 设备归属表 / 额度表 / 审计表 / 规则表</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+  <h2 id="sequences">关键时序</h2>
+  <div class="sequence-stack">
+    <div class="sequence-card">
+      <h3>发现与登记时序</h3>
+      <div class="sequence-lanes">
+        <div class="sequence-lane browser">
+          <h4>Virtual Browser</h4>
+          <ol>
+            <li>不直接参与节点发现与登记。</li>
+            <li>仅作为后续浏览器运行承载层存在。</li>
+          </ol>
+        </div>
+        <div class="sequence-lane edge">
+          <h4>Edge Client</h4>
+          <ol>
+            <li>发送 UDP beacon。</li>
+            <li>响应 <code>/health</code> 探测。</li>
+            <li>响应 <code>/api/v1/edge/device-info</code> 探测。</li>
+          </ol>
+        </div>
+        <div class="sequence-lane node">
+          <h4>Node Server</h4>
+          <ol>
+            <li>接收 beacon。</li>
+            <li>校验 discovery 协议字段。</li>
+            <li>调用 <code>/health</code>。</li>
+            <li>调用 <code>/device-info</code>。</li>
+            <li>写入 discovered 内存视图。</li>
+            <li>命中已登记节点时回写摘要。</li>
+          </ol>
+        </div>
+        <div class="sequence-lane platform">
+          <h4>Platform Server</h4>
+          <ol>
+            <li>本流程不直接参与。</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <div class="sequence-card">
+      <h3>bind 时序</h3>
+      <div class="sequence-lanes">
+        <div class="sequence-lane platform">
+          <h4>Platform Server / Operator</h4>
+          <ol>
+            <li>发起 bind 请求。</li>
+            <li>接收 bind 结果。</li>
+          </ol>
+        </div>
+        <div class="sequence-lane node">
+          <h4>Node Server</h4>
+          <ol>
+            <li>probe 目标 Edge。</li>
+            <li>执行查重与归属互斥校验。</li>
+            <li>生成 <code>clientId</code>。</li>
+            <li>写入 <code>edge_clients</code>。</li>
+            <li>写入 bind 审计。</li>
+            <li>兼容 push <code>clientId</code> 到 Edge。</li>
+          </ol>
+        </div>
+        <div class="sequence-lane edge">
+          <h4>Edge Client</h4>
+          <ol>
+            <li>响应 <code>/health</code> 与 <code>/device-info</code>。</li>
+            <li>接收 push <code>clientId</code>。</li>
+            <li>写入本地登记留痕。</li>
+          </ol>
+        </div>
+        <div class="sequence-lane browser">
+          <h4>Virtual Browser</h4>
+          <ol>
+            <li>本流程不直接参与。</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <div class="sequence-card">
+      <h3>后续 run 准入时序</h3>
+      <div class="sequence-lanes">
+        <div class="sequence-lane platform">
+          <h4>Platform Server</h4>
+          <ol>
+            <li>输出商业放行结果。</li>
+            <li>下发额度与上层业务动作。</li>
+          </ol>
+        </div>
+        <div class="sequence-lane node">
+          <h4>Node Server</h4>
+          <ol>
+            <li>校验 <code>healthy</code>。</li>
+            <li>校验 <code>verified</code>。</li>
+            <li>校验已有 <code>clientId</code>。</li>
+            <li>校验额度快照。</li>
+            <li>调用 Edge run。</li>
+          </ol>
+        </div>
+        <div class="sequence-lane edge">
+          <h4>Edge Client</h4>
+          <ol>
+            <li>接收 run 请求。</li>
+            <li>选择目标 slot。</li>
+            <li>将 env 加载到 Virtual Browser。</li>
+            <li>汇总本机运行结果。</li>
+          </ol>
+        </div>
+        <div class="sequence-lane browser">
+          <h4>Virtual Browser</h4>
+          <ol>
+            <li>加载 env 运行材料。</li>
+            <li>启动浏览器。</li>
+            <li>提供 CDP / VNC 运行结果。</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <div class="sequence-card">
+      <h3>stop / ending / backup 收口时序</h3>
+      <div class="sequence-lanes">
+        <div class="sequence-lane platform">
+          <h4>Platform Server / Operator</h4>
+          <ol>
+            <li>发起 stop / backup / ending。</li>
+            <li>接收最终收口结果。</li>
+          </ol>
+        </div>
+        <div class="sequence-lane node">
+          <h4>Node Server</h4>
+          <ol>
+            <li>调用 Edge 动作接口。</li>
+            <li>接收动作摘要与最终结果。</li>
+            <li>更新中心状态与审计。</li>
+          </ol>
+        </div>
+        <div class="sequence-lane edge">
+          <h4>Edge Client</h4>
+          <ol>
+            <li>停止浏览器运行。</li>
+            <li>释放 Virtual Browser 运行态。</li>
+            <li>恢复 slot 为空白 waiting 容器。</li>
+            <li>必要时执行 backup 资产动作。</li>
+          </ol>
+        </div>
+        <div class="sequence-lane browser">
+          <h4>Virtual Browser</h4>
+          <ol>
+            <li>停止浏览器进程。</li>
+            <li>清理运行态。</li>
+            <li>不保留旧 env 的运行上下文。</li>
+          </ol>
+        </div>
+      </div>
+      <div class="sequence-foot">
+        <strong>收口约束：</strong><code>ending</code>、<code>stop</code>、<code>backup</code> 成功后，slot 必须回到空白 waiting 容器；旧运行态不得遗留到下一次包加载。
+      </div>
+    </div>
+  </div>
+  <blockquote>
+    <p><strong>说明</strong>：关键时序按“分层泳道”表达，各层只展示自己负责的动作与事实，不跨层代填语义。</p>
+  </blockquote>
+
+  <hr>
+  <h2 id="implementation">P0 技术实现落地建议</h2>
+  <h3>Node Server 代码域建议</h3>
+  <ol>
+    <li><code>Discovery</code></li>
+    <li><code>Node</code></li>
+    <li><code>Bind</code></li>
+    <li><code>EdgeClient</code></li>
+    <li><code>Task</code></li>
+    <li><code>Platform</code></li>
+  </ol>
+  <h3>各域职责</h3>
+  <table>
+    <thead><tr><th>域</th><th>职责</th></tr></thead>
+    <tbody>
+      <tr><td><code>Discovery</code></td><td>UDP listener、beacon 校验、discovered 内存视图、过期清理</td></tr>
+      <tr><td><code>Node</code></td><td>节点详情、节点列表、心跳摘要、节点治理状态更新</td></tr>
+      <tr><td><code>Bind</code></td><td>bind、unbind、bind log、push/clear 本地登记</td></tr>
+      <tr><td><code>EdgeClient</code></td><td>对 Edge 的 HTTP 调用、/health、/device-info、错误映射</td></tr>
+      <tr><td><code>Task</code></td><td>节点层中心任务事实</td></tr>
+      <tr><td><code>Platform</code></td><td>平台额度快照、后续平台侧协同接口</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+  <h2 id="acceptance">逐层验收口径</h2>
+  <table>
+    <thead><tr><th>层</th><th>验收项</th></tr></thead>
+    <tbody>
+      <tr><td>Virtual Browser</td><td>浏览器成功启动；CDP 可连；VNC / WebVNC 可连；stop / ending 后可释放运行态；backup / ending 后可回到空白 waiting 容器</td></tr>
+      <tr><td>Edge Client</td><td>discovery 可用；/health 可用；/device-info 可用；边缘受控 API 可用；Virtual Browser 管理链路可用</td></tr>
+      <tr><td>Node Server</td><td>节点发现可用；bind 可用；unbind 可用；节点治理可用；状态收口可用；中心审计可用</td></tr>
+      <tr><td>Platform Server</td><td>商业归属可用；额度真相可用；平台放行规则可用</td></tr>
+    </tbody>
+  </table>
+
+  <hr>
+  <h2 id="conclusion">结论</h2>
+  <table>
+    <thead><tr><th>层级结论</th><th>定义</th></tr></thead>
+    <tbody>
+      <tr><td>Virtual Browser</td><td>负责真实浏览器运行</td></tr>
+      <tr><td>Edge Client</td><td>负责本机边缘管理与浏览器运行封装</td></tr>
+      <tr><td>Node Server</td><td>负责中心节点治理与边缘编排</td></tr>
+      <tr><td>Platform Server</td><td>负责商业规则与平台最终真相</td></tr>
+    </tbody>
+  </table>
+  <blockquote>
+    <p><strong>中心节点层结论</strong>：<code>Node Server P0</code> 的核心任务是建立稳定的中间治理层，承接节点身份、节点归属、节点健康、节点治理、节点审计和后续业务准入前提。</p>
+  </blockquote>
+</main>
+<button class="back-to-top" id="backTop" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
+<script>
+function toggleMenu(forceClose){
+  const sidebar=document.getElementById('sidebar');
+  const overlay=document.querySelector('.overlay');
+  const shouldOpen=forceClose===true?false:!sidebar.classList.contains('open');
+  sidebar.classList.toggle('open', shouldOpen);
+  overlay.classList.toggle('open', shouldOpen);
+}
+document.querySelector('#overview + blockquote + table')?.classList.add('summary-grid-table');
+const backTop=document.getElementById('backTop');
+const progress=document.getElementById('progressValue');
+const links=[...document.querySelectorAll('.sidebar-nav a')];
+const sections=links.map(a=>document.querySelector(a.getAttribute('href'))).filter(Boolean);
+const onScroll=()=>{
+  const maxScroll=document.documentElement.scrollHeight-window.innerHeight;
+  const ratio=maxScroll>0?(window.scrollY/maxScroll)*100:0;
+  progress.style.width=Math.min(100,Math.max(0,ratio))+'%';
+  backTop.classList.toggle('visible',window.scrollY>420);
+  let cur=null;
+  for(const s of sections){if(s.offsetTop<=window.scrollY+90)cur=s}
+  links.forEach(a=>a.classList.toggle('active',cur&&a.getAttribute('href')==='#'+cur.id));
+};
+window.addEventListener('scroll', onScroll, {passive:true});
+window.addEventListener('load', onScroll);
+links.forEach(a=>a.addEventListener('click',()=>{if(window.innerWidth<=900)toggleMenu(true)}));
+</script>
+</body>
+</html>

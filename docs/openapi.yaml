@@ -1,0 +1,991 @@
+openapi: 3.0.3
+info:
+  title: Private Browser Server Phase 1 API
+  version: 0.1.0-phase1
+  description: |
+    Private Browser Server Phase 1 正式接口文档。
+
+    当前只覆盖 Node 侧的发现、绑定、推送、解绑和节点查询。
+    这份文档的目标不是“接口能跑”，而是让联调、前端和平台同一口径对齐：
+
+    - UDP beacon 是唯一正式发现链路
+    - heartbeat 只证明已知节点仍在线，不承担发现职责
+    - bind 由 `accountId + clientIp` 触发
+    - bind 成功后由 Server 生成中心 `clientId`
+    - push 负责把 `clientId/accountId/nodeServerBaseUrl` 写回 Client 本地 `node-registration.json`
+    - 解绑只解除归属，不销毁历史身份
+    - 对外请求体仍使用 `accountId`，对内数据库统一写入 `main_account_id`，不再保留旧兼容字段
+
+    文档里的示例统一使用局域网地址和可读路径，避免再出现误导性的默认值。
+
+    当前所有接口统一返回 HTTP 200，业务结果放在 `code/message/data` 中：
+
+    - `1000` success
+    - `1002` 请求参数错误
+    - `1004` 数据不存在
+    - `1005` 远端调用失败
+    - `1500` 服务内部错误
+servers:
+  - url: /
+    description: 当前打开 Swagger 页面的 Server 服务入口
+tags:
+  - name: Health
+    description: 服务健康检查
+  - name: Discovery
+    description: Client UDP 自动发现主链路
+  - name: Binding
+    description: 中心绑定与 Client 留痕写回
+  - name: Nodes
+    description: 已绑定节点查询
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: |
+        返回 3400 Server 当前最小健康事实。
+
+        这里只反映 Server 本机是否正常提供 API、SQLite、Swagger 能力，
+        不表示某个具体 Client 节点是否 healthy。
+      responses:
+        '200':
+          description: Health response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseHealth'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      ok: true
+                      status: healthy
+                      service: private-browser-server
+                      mode: production
+                      version: 0.1.0-phase1
+                      configFile: /app/Settings/config-docker.yaml
+                      checkedAt: 1781613551
+                      checks:
+                        api:
+                          status: healthy
+                          message: http 服务可响应
+                        sqlite:
+                          status: healthy
+                          message: sqlite 已初始化
+                        swagger:
+                          status: healthy
+                          message: swagger/openapi 入口已挂载
+  /api/v1/edge-clients/discovered:
+    get:
+      tags: [Discovery]
+      summary: List discovered clients
+      description: |
+        返回当前通过 UDP beacon 收到的 discovered 视图。
+
+        这是“发现线索”，不是正式节点表：
+        - `clientId=""` 表示发现到了 Client，但还未绑定
+        - `clientId!= ""` 表示该发现项已经匹配到正式绑定节点
+
+        当前 discovered 结果来自内存缓存，会自动过期，不落正式 SQLite 表。
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - discovered 是查询接口，直接同步返回当前快照即可
+      responses:
+        '200':
+          description: Discovered list response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseDiscoveredList'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      items:
+                        - discoveryId: disc_1781613551275093000
+                          clientId: '9060901190001'
+                          accountId: '906090119'
+                          status: discovered
+                          clientIp: 192.168.10.220
+                          baseUrl: http://192.168.10.220:3300
+                          hostname: liningdeMacBook-Air.local
+                          os: darwin
+                          arch: arm64
+                          dockerApiUrl: http://192.168.10.220:2375
+                          healthStatus: healthy
+                          discoveredAt: 1781613551
+                          lastHeartbeatAt: 1781613551
+                      total: 1
+  /api/v1/edge-clients/heartbeat:
+    post:
+      tags: [Discovery]
+      summary: Receive edge heartbeat
+      description: |
+        接收 3300 Client 主动上报的服务活性 heartbeat。
+
+        这条接口只做三件事：
+        - 校验 discovery 协议字段
+        - 按 `baseUrl/clientIp` 匹配已知正式节点
+        - 更新已知节点的 heartbeat 活性摘要
+
+        当前口径下它不参与发现：
+        - UDP beacon 是唯一正式发现链路
+        - heartbeat 不能创建 discovered 来源，也不能把 discovered 升级成正式节点
+        - 不能把“heartbeat 打到了”解释成“UDP 自动发现链路已经成立”
+
+        它不会：
+        - 自动落正式绑定节点
+        - 自动生成 clientId
+        - 自动把 discovered 升级成 verified
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - heartbeat 是轻量活性上报，单次响应已足够表达接收结果
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HeartbeatRequest'
+            examples:
+              default:
+                value:
+                  discoveryMagic: PRIVATE_BROWSER_CLIENT_DISCOVERY
+                  protocolVersion: 1
+                  service: private-browser-client
+                  discoveryGroup: default
+                  clientIp: 192.168.10.220
+                  baseUrl: http://192.168.10.220:3300
+                  hostname: liningdeMacBook-Air.local
+                  lastHeartbeatAt: 1781613551
+      responses:
+        '200':
+          description: Heartbeat accepted or rejected by business code
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseHeartbeat'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      received: true
+                      source: heartbeat
+                      participatesInDiscovery: false
+                      knownNodeMatched: true
+                      matchedClientId: '9060901190001'
+                      matchedBy: baseUrl
+                      clientIp: 192.168.10.220
+                      baseUrl: http://192.168.10.220:3300
+                      lastHeartbeatAt: 1781613551
+                invalid_magic:
+                  value:
+                    code: 1002
+                    message: discoveryMagic 不匹配当前 Node Server 发现域
+                unmatched_known_node:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      received: true
+                      source: heartbeat
+                      participatesInDiscovery: false
+                      knownNodeMatched: false
+                      matchedClientId: ''
+                      matchedBy: ''
+                      clientIp: 192.168.10.220
+                      baseUrl: http://192.168.10.220:3300
+                      lastHeartbeatAt: 1781613551
+  /api/v1/edge-clients/bind:
+    post:
+      tags: [Binding]
+      summary: Bind client by accountId and clientIp
+      description: |
+        按已定案的 `accountId + clientIp` 绑定 Client。
+
+        说明：
+        - `accountId` 是对外 API 字段
+        - 数据库内部统一收口为 `main_account_id`
+        - 这里不再保留旧 `account_id` 兼容字段
+
+        执行顺序：
+        1. 根据 `clientIp` 探测 3300 Client `/health`
+        2. 探测 `/api/v1/edge/device-info`
+        3. 生成中心 `clientId`
+        4. 写入正式绑定节点表
+        5. 自动调用 3300 Client assign 接口下发 `clientId`
+
+        关键规则：
+        - 同一 Client 已被其它账号绑定时，必须拒绝重复绑定
+        - bind 成功但 push 失败时，不回滚 bind，只返回 `pushStatus=failed`
+
+        补充说明：
+        - 这里的 assign / push 只属于 Node 发现 Client 后的正式写回链路
+        - 它不改变“中心身份真相只在 Server”这一长期正式口径
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - bind 是短链路同步动作，push 只是写回留痕，不需要事件流
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BindRequest'
+            examples:
+              default:
+                value:
+                  accountId: '906090119'
+                  clientIp: 192.168.10.220
+      responses:
+        '200':
+          description: Bind success or business reject
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseBind'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190001'
+                      accountId: '906090119'
+                      status: bound
+                      clientIp: 192.168.10.220
+                      baseUrl: http://192.168.10.220:3300
+                      bindStatus: success
+                      pushStatus: success
+                      node:
+                        clientId: '9060901190001'
+                        accountId: '906090119'
+                        name: '9060901190001'
+                        clientIp: 192.168.10.220
+                        baseUrl: http://192.168.10.220:3300
+                        dockerApiUrl: http://192.168.10.220:2375
+                        os: darwin
+                        arch: arm64
+                        healthStatus: healthy
+                        pushStatus: pending
+                        createdAt: 1781612873
+                        updatedAt: 1781612873
+                invalid_body:
+                  value:
+                    code: 1002
+                    message: bind request body 非法
+                already_bound:
+                  value:
+                    code: 1005
+                    message: 该 Client 已经绑定，无需重复绑定
+                bound_by_other:
+                  value:
+                    code: 1005
+                    message: 该 Client 已被其它账号绑定，请先解绑后再重新绑定
+  /api/v1/edge-clients/{clientId}/push-client-id:
+    post:
+      tags: [Binding]
+      summary: Push clientId to client
+      description: |
+        对已绑定节点补推一次 clientId 到 3300 Client。
+
+        适用场景：
+        - bind 已成功，但第一次写回失败
+        - 3300 Client 本地 `node-registration.json` 需要重新写回
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 这是一次性补推动作，成功失败都可同步收口
+      parameters:
+        - $ref: '#/components/parameters/ClientID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushClientIDRequest'
+            examples:
+              default:
+                value:
+                  accountId: '906090119'
+                  nodeServerBaseUrl: http://192.168.10.119:3400
+                  source: manual-repush
+                  assignedAt: 1781613551
+      responses:
+        '200':
+          description: Push result
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponsePushClientID'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190001'
+                      pushStatus: success
+                      pushedAt: 1781613551
+                invalid_body:
+                  value:
+                    code: 1002
+                    message: push request body 非法
+                client_not_found:
+                  value:
+                    code: 1005
+                    message: edge client not found
+  /api/v1/edge-clients/{clientId}/unbind:
+    post:
+      tags: [Binding]
+      summary: Unbind client and clear local registration cache
+      description: |
+        正式解绑接口。
+
+        执行顺序：
+        1. Node Server 根据 `clientId` 读取中心已绑定节点
+        2. 中心解除该节点与当前账号的归属关系
+        3. 保留原 `clientId` 和原设备序号，不删除历史身份
+        4. 反向调用 3300 Client `POST /api/v1/edge/node-registration/clear`
+        5. 清理 Client 本地 `node-registration.json` 留痕
+
+        关键规则：
+        - unbind 成功后，原 `clientId` 不变，后续 rebind 继续复用
+        - 如果 Client 本地 clear 失败，不回滚中心 unbind
+        - clear 失败会通过 `clearRegistrationStatus=failed` 明确返回
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 原因：unbind 是短链路中心治理动作，同步 HTTP 已足够表达中心解绑是否成功，
+          本地清理结果也可直接在当前响应里收口
+
+      # SSE 说明：
+      # - 本接口不使用 SSE
+      # - 解绑动作短、结果明确，继续用同步 HTTP 更容易联调和排障
+      parameters:
+        - $ref: '#/components/parameters/ClientID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnbindRequest'
+            examples:
+              default:
+                value:
+                  source: manual-unbind
+      responses:
+        '200':
+          description: Unbind result
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseUnbind'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190001'
+                      accountId: '906090119'
+                      status: unbound
+                      clearRegistrationStatus: success
+                      unboundAt: 1782218700
+                clear_failed:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190001'
+                      accountId: '906090119'
+                      status: unbound
+                      clearRegistrationStatus: failed
+                      clearRegistrationMessage: 'request failed: Post "http://192.168.10.220:3300/api/v1/edge/node-registration/clear": context deadline exceeded'
+                      unboundAt: 1782218700
+                already_unbound:
+                  value:
+                    code: 1005
+                    message: 该 Client 当前未绑定，无需解绑
+                client_not_found:
+                  value:
+                    code: 1005
+                    message: edge client not found
+  /api/v1/edge-clients:
+    get:
+      tags: [Nodes]
+      summary: List bound clients
+      description: |
+        返回当前账号下的正式已绑定节点列表。
+
+        注意：
+        - 这里只返回正式已绑定节点
+        - 未绑定 discovered 项不会出现在这里
+      parameters:
+        - $ref: '#/components/parameters/AccountIDQuery'
+      responses:
+        '200':
+          description: Bound client list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseBoundClientList'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      items:
+                        - clientId: '9060901190001'
+                          accountId: '906090119'
+                          name: '9060901190001'
+                          clientIp: 192.168.10.220
+                          baseUrl: http://192.168.10.220:3300
+                          dockerApiUrl: http://192.168.10.220:2375
+                          os: darwin
+                          arch: arm64
+                          healthStatus: healthy
+                          pushStatus: success
+                          createdAt: 1781612873
+                          updatedAt: 1781612873
+                      total: 1
+                missing_account_id:
+                  value:
+                    code: 1002
+                    message: accountId 不能为空
+  /api/v1/edge-clients/{clientId}:
+    get:
+      tags: [Nodes]
+      summary: Get bound client detail
+      description: 返回单个正式已绑定节点详情。
+      parameters:
+        - $ref: '#/components/parameters/ClientID'
+      responses:
+        '200':
+          description: Bound client detail
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseBoundClient'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190001'
+                      accountId: '906090119'
+                      name: '9060901190001'
+                      clientIp: 192.168.10.220
+                      baseUrl: http://192.168.10.220:3300
+                      dockerApiUrl: http://192.168.10.220:2375
+                      os: darwin
+                      arch: arm64
+                      healthStatus: healthy
+                      pushStatus: success
+                      createdAt: 1781612873
+                      updatedAt: 1781612873
+                not_found:
+                  value:
+                    code: 1004
+                    message: edge client not found
+components:
+  parameters:
+    ClientID:
+      name: clientId
+      in: path
+      required: true
+      description: 中心节点唯一身份，由 3400 Server 生成
+      schema:
+        type: string
+      example: 9060901190001
+    AccountIDQuery:
+      name: accountId
+      in: query
+      required: true
+      description: 当前主账号 ID，对外仍叫 accountId，数据库内部统一映射为 main_account_id
+      schema:
+        type: string
+      example: '906090119'
+  schemas:
+    ApiResponseBase:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: integer
+          format: int64
+          description: 业务结果码。当前 3400 统一使用 HTTP 200，成功或失败都由这个字段表达。
+          example: 1000
+        message:
+          type: string
+          description: 人可读业务消息。联调和排障时优先看这里。
+          example: success
+    ApiErrorResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+      description: 统一错误响应包裹
+    ApiResponseHealth:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/HealthResponse'
+    ApiResponseDiscoveredList:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/DiscoveredListData'
+    ApiResponseHeartbeat:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/HeartbeatResponse'
+    ApiResponseBind:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BindResponse'
+    ApiResponsePushClientID:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/PushClientIDResponse'
+    ApiResponseUnbind:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/UnbindResponse'
+    ApiResponseBoundClientList:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BoundClientListData'
+    ApiResponseBoundClient:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BoundClient'
+    CheckResult:
+      type: object
+      properties:
+        status:
+          type: string
+          description: 当前检查项状态
+          example: healthy
+        message:
+          type: string
+          description: 当前检查项说明
+          example: http 服务可响应
+    HealthResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          description: Server 健康探针总体结果
+          example: true
+        status:
+          type: string
+          description: 当前统一返回 healthy；后续若扩更多自检项，可继续细化
+          example: healthy
+        service:
+          type: string
+          description: 服务标识
+          example: private-browser-server
+        mode:
+          type: string
+          description: 当前运行模式
+          example: production
+        version:
+          type: string
+          description: 当前服务版本
+          example: 0.1.0-phase1
+        configFile:
+          type: string
+          description: 当前进程使用的配置文件绝对路径
+          example: /app/Settings/config-docker.yaml
+        checkedAt:
+          type: integer
+          format: int64
+          description: 本次健康检查生成时间
+        checks:
+          type: object
+          description: 分项健康结果
+          additionalProperties:
+            $ref: '#/components/schemas/CheckResult'
+    DiscoveredClient:
+      type: object
+      description: discovered 视图中的单条发现项
+      properties:
+        discoveryId:
+          type: string
+          description: 本次 discovered 视图条目 ID，只用于前端展示和排障
+          example: disc_1781613551275093000
+        clientId:
+          type: string
+          description: 非空表示该发现项已经匹配到正式绑定节点；为空表示仍未绑定
+          example: 9060901190001
+        accountId:
+          type: string
+          description: 如果已匹配正式绑定节点，这里会带出对应账号
+          example: '906090119'
+        status:
+          type: string
+          description: 当前固定为 discovered
+          example: discovered
+        clientIp:
+          type: string
+          description: Node 当前用于识别这台 Client 的内网 IP
+          example: 192.168.10.220
+        baseUrl:
+          type: string
+          description: Node 当前探测使用的 3300 Edge HTTP 入口
+          example: http://192.168.10.220:3300
+        hostname:
+          type: string
+          description: Client 广播或 heartbeat 带来的宿主机名
+          example: liningdeMacBook-Air.local
+        os:
+          type: string
+          description: 从 Client `device-info` 探测到的宿主机系统
+          example: darwin
+        arch:
+          type: string
+          description: 从 Client `device-info` 探测到的宿主机架构
+          example: arm64
+        cpuCores:
+          type: integer
+          format: int64
+          description: 从 Client `device-info` 探测到的宿主机 CPU 核心数
+          example: 8
+        memoryTotalMb:
+          type: integer
+          format: int64
+          description: 从 Client `device-info` 探测到的宿主机内存总量，单位 MB
+          example: 16384
+        dockerApiUrl:
+          type: string
+          description: Client 对外宣告给 Node 的 Docker API 入口
+          example: http://192.168.10.220:2375
+        dockerVersion:
+          type: string
+          description: 从 Client `device-info` 探测到的 Docker Engine 版本
+          example: "27.5.1"
+        healthStatus:
+          type: string
+          description: 最近一次探测 3300 Client `/health` 得出的最小健康结论
+          example: healthy
+        discoveredAt:
+          type: integer
+          format: int64
+          description: 这条 discovered 视图首次被建立的时间
+        lastHeartbeatAt:
+          type: integer
+          format: int64
+          description: 最近一次 UDP/heartbeat 观测时间
+    DiscoveredListData:
+      type: object
+      properties:
+        items:
+          type: array
+          description: 当前 discovered 视图列表
+          items:
+            $ref: '#/components/schemas/DiscoveredClient'
+        total:
+          type: integer
+          description: 当前 discovered 条目数
+          example: 1
+    HeartbeatRequest:
+      type: object
+      required:
+        - discoveryMagic
+        - protocolVersion
+        - service
+        - discoveryGroup
+      properties:
+        discoveryMagic:
+          type: string
+          description: 平台 discovery 魔术字，必须与 3400 配置一致
+          example: PRIVATE_BROWSER_CLIENT_DISCOVERY
+        protocolVersion:
+          type: integer
+          description: discovery 协议版本
+          example: 1
+        service:
+          type: string
+          description: 当前必须是 `Private_Browser_Client` 或 `private-browser-client`
+          example: private-browser-client
+        discoveryGroup:
+          type: string
+          description: 当前发现域分组
+          example: default
+        clientIp:
+          type: string
+          description: Client 自报的对外接入 IP
+          example: 192.168.10.220
+        baseUrl:
+          type: string
+          description: Client 自报的 3300 Edge HTTP 入口
+          example: http://192.168.10.220:3300
+        hostname:
+          type: string
+          description: Client 自报的宿主机名
+          example: liningdeMacBook-Air.local
+        lastHeartbeatAt:
+          type: integer
+          format: int64
+          description: Client 自报的当前 heartbeat 时间
+          example: 1781613551
+    HeartbeatResponse:
+      type: object
+      properties:
+        received:
+          type: boolean
+          description: 3400 是否已成功接收并处理该 heartbeat
+          example: true
+        source:
+          type: string
+          description: 当前写死为 heartbeat，方便与 UDP 来源区分
+          example: heartbeat
+        clientIp:
+          type: string
+          description: 本次 heartbeat 最终用于 discovered 归一化的 clientIp
+          example: 192.168.10.220
+        baseUrl:
+          type: string
+          description: 本次 heartbeat 最终用于探测的 baseUrl
+          example: http://192.168.10.220:3300
+        clientId:
+          type: string
+          description: 若已匹配正式绑定节点，则返回中心 clientId；否则可能为空
+          example: 9060901190001
+        accountId:
+          type: string
+          description: 若已匹配正式绑定节点，则返回对应账号
+          example: '906090119'
+        lastHeartbeatAt:
+          type: integer
+          format: int64
+          description: 本次 heartbeat 对应的已知节点活性时间
+          example: 1781613551
+    BindRequest:
+      type: object
+      required: [accountId, clientIp]
+      properties:
+        accountId:
+          type: string
+          description: 目标主账号 ID。对外仍叫 accountId，落库时统一写入 main_account_id
+          example: '906090119'
+        clientIp:
+          type: string
+          description: 目标 3300 Client 的内网 IP
+          example: 192.168.10.220
+    PushClientIDRequest:
+      type: object
+      required: [accountId, nodeServerBaseUrl]
+      properties:
+        accountId:
+          type: string
+          description: 当前主账号 ID。对外仍叫 accountId，落库时统一写入 main_account_id
+          example: '906090119'
+        nodeServerBaseUrl:
+          type: string
+          description: Node Server 当前可访问的真实控制地址；由 Node 显式下发给 Client，Client 不再自行猜测默认值
+          example: http://192.168.10.119:3400
+        source:
+          type: string
+          description: 本次补推来源说明
+          example: manual-repush
+        assignedAt:
+          type: integer
+          format: int64
+          description: 业务侧认为本次 push 的下发时间；不传时由服务端自行记录当前时间
+          example: 1781613551
+    UnbindRequest:
+      type: object
+      properties:
+        source:
+          type: string
+          description: 本次解绑来源说明；不传时服务端默认记为 `node-unbind`
+          example: manual-unbind
+    BoundClient:
+      type: object
+      description: 正式已绑定节点
+      properties:
+        clientId:
+          type: string
+          description: 中心节点唯一身份，格式为 `mainAccountId + 4 位序号`
+          example: 9060901190001
+        accountId:
+          type: string
+          description: 当前绑定账号
+          example: '906090119'
+        name:
+          type: string
+          description: 当前最小展示名。第一阶段默认回退成 clientId
+          example: '9060901190001'
+        clientIp:
+          type: string
+          description: 当前正式登记的 Client 内网 IP
+          example: 192.168.10.220
+        baseUrl:
+          type: string
+          description: 当前正式登记的 3300 Edge HTTP 入口
+          example: http://192.168.10.220:3300
+        dockerApiUrl:
+          type: string
+          description: 当前正式登记的 Docker API 入口
+          example: http://192.168.10.220:2375
+        os:
+          type: string
+          description: bind 时探测到的宿主机系统
+          example: darwin
+        arch:
+          type: string
+          description: bind 时探测到的宿主机架构
+          example: arm64
+        healthStatus:
+          type: string
+          description: bind 时探测到的最小健康状态
+          example: healthy
+        pushStatus:
+          type: string
+          description: 最近一次 push-client-id 结果
+          example: success
+        createdAt:
+          type: integer
+          format: int64
+          description: 正式绑定创建时间
+        updatedAt:
+          type: integer
+          format: int64
+          description: 正式绑定最近更新时间
+    BindResponse:
+      type: object
+      properties:
+        clientId:
+          type: string
+          description: 本次 bind 生成的中心 clientId
+          example: 9060901190001
+        accountId:
+          type: string
+          description: 当前绑定账号
+          example: '906090119'
+        status:
+          type: string
+          description: 当前固定为 bound
+          example: bound
+        clientIp:
+          type: string
+          description: 本次绑定的目标 Client IP
+          example: 192.168.10.220
+        baseUrl:
+          type: string
+          description: 本次绑定探测出的 baseUrl
+          example: http://192.168.10.220:3300
+        bindStatus:
+          type: string
+          description: bind 主动作结果
+          example: success
+        pushStatus:
+          type: string
+          description: 自动 push-client-id 结果；可能是 success 或 failed
+          example: success
+        pushMessage:
+          type: string
+          description: 当 pushStatus=failed 时，这里返回具体失败原因
+          example: ''
+        node:
+          $ref: '#/components/schemas/BoundClient'
+    PushClientIDResponse:
+      type: object
+      properties:
+        clientId:
+          type: string
+          description: 本次补推的中心 clientId
+          example: 9060901190001
+        pushStatus:
+          type: string
+          description: 当前固定为 success；失败时直接走错误包裹
+          example: success
+        pushedAt:
+          type: integer
+          format: int64
+          description: 本次服务端完成 push 的时间
+          example: 1781613551
+    UnbindResponse:
+      type: object
+      properties:
+        clientId:
+          type: string
+          description: 被解绑的中心 clientId；解绑后不会变化
+          example: 9060901190001
+        accountId:
+          type: string
+          description: 本次解除归属的账号
+          example: '906090119'
+        status:
+          type: string
+          description: 当前固定为 unbound
+          example: unbound
+        clearRegistrationStatus:
+          type: string
+          description: Client 本地 `node-registration.json` 清理结果
+          enum: [pending, success, failed]
+          example: success
+        clearRegistrationMessage:
+          type: string
+          description: 当本地清理失败时返回具体失败原因
+          example: ''
+        unboundAt:
+          type: integer
+          format: int64
+          description: 中心解绑完成时间
+          example: 1782218700
+    BoundClientListData:
+      type: object
+      properties:
+        items:
+          type: array
+          description: 正式已绑定节点列表
+          items:
+            $ref: '#/components/schemas/BoundClient'
+        total:
+          type: integer
+          description: 当前账号下正式已绑定节点数量
+          example: 1

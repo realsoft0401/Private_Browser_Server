@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Private Browser Server Phase 1 API</title>
+    <link
+      rel="stylesheet"
+      href="/vendor/swagger-ui/swagger-ui.css"
+      onerror="this.onerror=null;this.href='https://unpkg.com/swagger-ui-dist@5/swagger-ui.css';"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #0b1220;
+        --panel: rgba(255, 255, 255, 0.92);
+        --panel-border: rgba(148, 163, 184, 0.22);
+        --text: #0f172a;
+        --muted: #64748b;
+        --accent: #2563eb;
+        --accent-2: #06b6d4;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top left, rgba(37, 99, 235, 0.18), transparent 34%),
+          radial-gradient(circle at top right, rgba(6, 182, 212, 0.14), transparent 30%),
+          linear-gradient(180deg, #eff6ff 0%, #f8fafc 34%, #eef2ff 100%);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .swagger-shell {
+        max-width: 1540px;
+        margin: 0 auto;
+        padding: 24px 20px 40px;
+      }
+
+      .swagger-hero {
+        display: grid;
+        gap: 10px;
+        margin: 8px 0 18px;
+        padding: 22px 24px;
+        border: 1px solid var(--panel-border);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.78);
+        backdrop-filter: blur(16px);
+        box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+      }
+
+      .swagger-hero h1 {
+        margin: 0;
+        font-size: 28px;
+        line-height: 1.2;
+        letter-spacing: -0.03em;
+      }
+
+      .swagger-hero p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.7;
+        max-width: 980px;
+      }
+
+      .swagger-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .swagger-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(37, 99, 235, 0.09);
+        color: #1d4ed8;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .swagger-badge.secondary {
+        background: rgba(6, 182, 212, 0.09);
+        color: #0e7490;
+      }
+
+      #swagger-ui {
+        border-radius: 24px;
+        overflow: hidden;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        box-shadow: 0 24px 70px rgba(15, 23, 42, 0.12);
+      }
+
+      .swagger-ui .topbar {
+        display: none;
+      }
+
+      .swagger-ui .info {
+        margin: 24px 0 0;
+      }
+
+      .swagger-ui .scheme-container,
+      .swagger-ui .opblock,
+      .swagger-ui .model-box,
+      .swagger-ui .responses-inner,
+      .swagger-ui .tab-header,
+      .swagger-ui .try-out__btn {
+        box-shadow: none;
+      }
+
+      .swagger-ui .opblock {
+        border-radius: 18px;
+      }
+
+      .swagger-ui .opblock-tag-section {
+        margin-bottom: 18px;
+      }
+
+      .swagger-ui .opblock-summary {
+        padding: 12px 18px;
+      }
+
+      .swagger-ui .opblock-summary-description {
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="swagger-shell">
+      <section class="swagger-hero">
+        <div class="swagger-badges">
+          <span class="swagger-badge">Private Browser Server</span>
+          <span class="swagger-badge secondary">Phase 1 API</span>
+          <span class="swagger-badge secondary">OpenAPI / Swagger</span>
+        </div>
+        <h1>Node Server 正式接口文档</h1>
+        <p>
+          这份文档只覆盖当前 Server 的正式联调入口：发现、绑定、推送、解绑和节点查询。
+          SSE 只在确有多阶段任务时使用；短链路接口优先保持同步 HTTP。
+        </p>
+      </section>
+      <div id="swagger-ui"></div>
+    </main>
+    <script src="/vendor/swagger-ui/swagger-ui-bundle.js"></script>
+    <script>
+      function openapiSpecURL() {
+        var specURL = new URL("/openapi.yaml", window.location.origin);
+        specURL.searchParams.set("t", String(Date.now()));
+        return specURL.toString();
+      }
+
+      function bootSwagger() {
+        window.ui = SwaggerUIBundle({
+          url: openapiSpecURL(),
+          dom_id: "#swagger-ui",
+          deepLinking: true,
+          docExpansion: "list",
+          defaultModelsExpandDepth: 1,
+          defaultModelExpandDepth: 1,
+          displayRequestDuration: true,
+          filter: true,
+          persistAuthorization: true,
+          presets: [SwaggerUIBundle.presets.apis],
+          layout: "BaseLayout"
+        });
+      }
+
+      window.addEventListener("load", function () {
+        if (window.SwaggerUIBundle) {
+          bootSwagger();
+          return;
+        }
+        var fallback = document.createElement("script");
+        fallback.src = "https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js";
+        fallback.onload = bootSwagger;
+        document.body.appendChild(fallback);
+      });
+    </script>
+  </body>
+</html>
