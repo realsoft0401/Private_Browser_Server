@@ -72,7 +72,7 @@ Server 负责：
 - 生成中心 `clientId`
 - 维护 `main_account_id`
 - 维护 Client 与账号的绑定关系
-- 维护解绑后的身份延续
+- 在 unbind 时删除当前有效绑定结果，并保留历史审计
 
 也就是说：
 
@@ -161,6 +161,13 @@ Server 负责记录：
 - `client_ip`
 - `base_url`
 - `action/result/message`
+
+这里要特别收紧一条：
+
+- unbind 不再表示“解绑但保留原身份待下次复用”
+- unbind 表示“删除当前有效绑定结果”
+- 后续再次 bind 时，Server 必须重新生成新的 `clientId`
+- 历史日志保留，但旧绑定结果不再作为当前有效节点继续存在
 
 ## 5. Server 不负责什么
 

@@ -2,19 +2,18 @@
 
 ## 功能目标
 
-解除某个正式已绑定节点与当前账号的中心归属关系，并尝试清理 Client 本地 `node-registration.json` 留痕。
+删除某个正式已绑定节点的当前有效绑定结果，并尝试清理 Client 本地 `node-registration.json` 留痕。
 
 > 当前文档定位：这是 `Private_Browser_Server` 的正式中心治理接口。
 > 它负责“中心解绑收口”，不是发现接口，也不是环境包生命周期接口。
 
 ## 业务边界
 
-- 负责根据 `clientId` 解除中心账号归属
-- 负责保留原 `clientId` 和原设备序号
+- 负责根据 `clientId` 删除当前有效绑定结果
 - 负责记录 unbind / clear-registration 审计
 - 负责调用 Client `/api/v1/edge/node-registration/clear`
 - 不负责删除节点历史任务
-- 不负责销毁节点身份
+- 不负责删除历史审计
 - 不负责删除任何 browser-env、slot 或本机业务资产
 
 ## 前置校验
@@ -28,10 +27,9 @@
 
 成功后：
 
-- `edge_clients.main_account_id` 被清空
-- 原 `clientId` 保留
-- 节点进入“未绑定但身份保留”的中心状态
+- 当前有效绑定结果被删除
 - 尝试清理 Client 本地 `node-registration.json`
+- 后续同一台 Client 如果再次 bind，必须重新生成新的 `clientId`
 
 失败后：
 
@@ -133,7 +131,7 @@ Client 本地清理失败但中心解绑成功：
 当前第一阶段按同步 HTTP 收口：
 
 1. 读取中心节点
-2. 中心执行 unbind
+2. 中心删除当前有效绑定结果
 3. 写 unbind 审计
 4. 调用 Client clear 接口
 5. 写 clear-registration 审计
@@ -155,6 +153,7 @@ Client 本地清理失败但中心解绑成功：
 补充说明：
 
 - `clearRegistrationStatus=failed` 不算接口失败，它只表示“中心解绑成功，但 Client 本地缓存清理失败”
+- 这里的“中心解绑成功”应理解为“当前有效绑定结果删除成功”，不是“旧身份继续保留待复用”
 
 ## 日志字段
 
@@ -169,7 +168,7 @@ Client 本地清理失败但中心解绑成功：
 ## 联调验收标准
 
 - bind 成功后的节点，可以成功 unbind
-- unbind 后中心记录必须保留原 `clientId`
+- unbind 后当前有效绑定结果必须被删除
 - unbind 后 Client 本地 `node-registration.json` 应被删除
 - clear 失败时，不允许回滚中心 unbind
-- 后续再次 bind 同一节点时，必须复用原 `clientId`
+- 后续再次 bind 同一节点时，必须重新生成新的 `clientId`

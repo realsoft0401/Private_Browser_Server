@@ -312,7 +312,6 @@
 
 ### 不负责内容
 
-- 不分配新 `clientId`
 - 不删除历史任务
 - 不删除历史环境聚合记录
 
@@ -326,8 +325,9 @@
 
 ### 关键规则
 
-- unbind 后原 `clientId` 不变。
-- 重新绑定时继续沿用原节点身份与历史审计口径。
+- unbind 删除的是当前有效绑定结果，不是只清空账号字段。
+- unbind 后必须清空 Client 本地 `node-registration.json`。
+- 后续再次 bind 时必须重新生成新的 `clientId`。
 - 清空 Client 本地 JSON 失败时，不回滚中心解绑。
 - 解绑是治理动作，不是删除节点历史。
 
@@ -562,7 +562,8 @@ stale/offline
 
 verified 节点
   -> unbind success -> 中心解除归属
-  -> 保留原 clientId 与历史审计
+  -> 删除当前有效绑定结果
+  -> 保留历史审计
 ```
 
 ## 7. 存储与审计要求
@@ -782,7 +783,7 @@ Server SQLite 明确不要保存：
 2. Server 能通过 `/health + /device-info` 探测节点事实
 3. Server 能把一个节点正式 bind 到主账号，并生成稳定 `clientId`
 4. 同一个 Client 被其它账号重复绑定时，Server 会明确拒绝
-5. Server 能执行 unbind，并保留原 `clientId` 与历史审计
+5. Server 能执行 unbind，删除当前有效绑定结果，并保留历史审计
 6. Server 能识别 `healthy / unhealthy / stale / offline`
 7. Server 能识别 `verified / blocked`，并用 `discovery_reason` 表达阻断原因
 8. 节点 IP 或设备事实变化时，Server 不会静默覆盖，而会进入治理状态

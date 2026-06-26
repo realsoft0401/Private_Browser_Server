@@ -36,6 +36,7 @@ func NewService() *Service {
 // 当前仍然保留第一阶段 bind 输入，但内部序号策略已经收紧：
 // - discovery 不落正式表，但 bind 前会真实探测 Client；
 // - clientId 仍然是 `mainAccountId + 4位序号`；
+// - unbind 删除当前有效绑定结果后，下一次 bind 必须重新生成新的 clientId；
 // - 设备序号不再按列表数量猜，而是走 repository 里的 `MAX(client_sequence)+1`。
 func (s *Service) BindByAccountAndClientIP(ctx context.Context, request BindModel.BindRequest) (*BindModel.BindResponse, error) {
 	accountID := strings.TrimSpace(request.AccountID)
@@ -55,8 +56,6 @@ func (s *Service) BindByAccountAndClientIP(ctx context.Context, request BindMode
 	}
 	if existingNode != nil {
 		switch strings.TrimSpace(existingNode.MainAccountID) {
-		case "":
-			// 已解绑节点允许复用原中心身份重新绑定。
 		case accountID:
 			return nil, fmt.Errorf("该 Client 已经绑定，无需重复绑定")
 		default:
@@ -72,18 +71,11 @@ func (s *Service) BindByAccountAndClientIP(ctx context.Context, request BindMode
 
 	now := time.Now().Unix()
 	apiKeyHash := hashAPIKey(strings.TrimSpace(Settings.Conf.EdgeConfig.APIKey))
-	clientSequence := int64(0)
-	clientID := ""
-	if existingNode != nil {
-		clientSequence = existingNode.ClientSequence
-		clientID = existingNode.ClientID
-	} else {
-		clientSequence, err = NodeRepo.NewRepository().AllocateNextSequence(ctx, accountID)
-		if err != nil {
-			return nil, err
-		}
-		clientID = fmt.Sprintf("%s%04d", accountID, clientSequence)
+	clientSequence, err := NodeRepo.NewRepository().AllocateNextSequence(ctx, accountID)
+	if err != nil {
+		return nil, err
 	}
+	clientID := fmt.Sprintf("%s%04d", accountID, clientSequence)
 	row := &NodeDAO.Row{
 		ClientID:                clientID,
 		MainAccountID:           accountID,
@@ -111,11 +103,7 @@ func (s *Service) BindByAccountAndClientIP(ctx context.Context, request BindMode
 		UpdatedAt:               now,
 		DeletedAt:               0,
 	}
-	if existingNode != nil {
-		err = NodeRepo.NewRepository().Rebind(ctx, row)
-	} else {
-		err = NodeRepo.NewRepository().Create(ctx, row)
-	}
+	err = NodeRepo.NewRepository().Create(ctx, row)
 	if err != nil {
 		_ = BindRepo.NewRepository().CreateLog(ctx, &BindDAO.LogRow{
 			ClientID:      clientID,
@@ -188,12 +176,12 @@ func (s *Service) BindByAccountAndClientIP(ctx context.Context, request BindMode
 	return response, nil
 }
 
-// UnbindClient 解除当前节点的中心归属，并尝试清理 Client 本地 node-registration.json 留痕。
+// UnbindClient 删除当前有效绑定结果，并尝试清理 Client 本地 node-registration.json 留痕。
 //
 // 职责边界：
-// - 先收口中心 unbind，再尝试清理 Client 本地留痕；
+// - 先删除中心当前有效绑定结果，再尝试清理 Client 本地留痕；
 // - 清理本地失败不回滚中心解绑；
-// - 后续如果再次 bind，应沿用原 clientId 和 clientSequence。
+// - 后续如果再次 bind，必须重新生成新的 clientId。
 func (s *Service) UnbindClient(ctx context.Context, clientID string, request BindModel.UnbindRequest) (*BindModel.UnbindResponse, error) {
 	clientID = strings.TrimSpace(clientID)
 	if clientID == "" {

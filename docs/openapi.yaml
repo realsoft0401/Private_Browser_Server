@@ -357,13 +357,14 @@ paths:
 
         执行顺序：
         1. Node Server 根据 `clientId` 读取中心已绑定节点
-        2. 中心解除该节点与当前账号的归属关系
-        3. 保留原 `clientId` 和原设备序号，不删除历史身份
+        2. 中心删除该节点当前有效绑定结果
+        3. 保留历史审计，但不保留旧绑定结果作为当前有效身份
         4. 反向调用 3300 Client `POST /api/v1/edge/node-registration/clear`
         5. 清理 Client 本地 `node-registration.json` 留痕
 
         关键规则：
-        - unbind 成功后，原 `clientId` 不变，后续 rebind 继续复用
+        - unbind 成功后，旧 `clientId` 不再继续作为当前有效绑定结果保留
+        - 后续再次 bind 必须重新生成新的 `clientId`
         - 如果 Client 本地 clear 失败，不回滚中心 unbind
         - clear 失败会通过 `clearRegistrationStatus=failed` 明确返回
 

@@ -132,12 +132,23 @@ func (r *Repository) GetByBaseURL(ctx context.Context, baseURL string) (*NodeMod
 //
 // 设计来源：
 // - 旧的 `len(nodes)+1` 在解绑、软删除、并发 bind 场景下会重复；
-// - 现在口径已经收紧为 `MAX(client_sequence)+1`，且即使解绑也不回收；
-// - 因此序号分配必须下沉到 repository，避免业务层各自猜。
+// - 现在 unbind 已经继续收紧为“直接删除 edge_clients 当前记录”，因此不能再只看当前节点表；
+// - 当前表 `edge_clients` 只保存“当前有效节点”，历史 bind/unbind 留痕在 `edge_client_bind_logs`；
+// - 所以这里必须同时参考“当前有效节点表 + 历史绑定审计”，保证即使解绑后删记录，下一次也不会回到 `0001`。
 func (r *Repository) AllocateNextSequence(ctx context.Context, mainAccountID string) (int64, error) {
 	var sequence sql.NullInt64
-	err := CommonRepo.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(client_sequence), 0)
-		FROM edge_clients WHERE main_account_id = ?`, mainAccountID).Scan(&sequence)
+	err := CommonRepo.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence), 0) FROM (
+		SELECT client_sequence AS sequence
+		FROM edge_clients
+		WHERE main_account_id = ?
+		UNION ALL
+		SELECT CAST(SUBSTR(client_id, LENGTH(?) + 1) AS INTEGER) AS sequence
+		FROM edge_client_bind_logs
+		WHERE main_account_id = ?
+		  AND action = 'bind'
+		  AND result = 'success'
+		  AND client_id LIKE ? || '%'
+	)`, mainAccountID, mainAccountID, mainAccountID, mainAccountID).Scan(&sequence)
 	if err != nil {
 		return 0, fmt.Errorf("query next client sequence failed: %w", err)
 	}
@@ -160,12 +171,12 @@ func (r *Repository) UpdatePushStatus(ctx context.Context, clientID, pushStatus 
 	return nil
 }
 
-// Rebind 更新已存在但当前未绑定节点的中心归属与最新探测摘要。
+// Rebind 保留为历史兼容辅助方法，但当前正式 bind 主线已经不再复用旧身份。
 //
-// 设计来源：
-// - 已解绑节点后续重新绑定时，必须沿用原 clientId 和 clientSequence；
-// - 因此这里不能再走 insert，而要在保留中心身份的前提下更新归属与节点摘要；
-// - 这个方法只更新“允许随着重绑刷新”的字段，不触碰历史 created_at 和中心身份主键。
+// 职责边界：
+// - 当前正式口径已经改成：unbind 删除当前有效绑定结果，后续 bind 必须生成新的 clientId；
+// - 因此这条方法不再服务当前主链路，只保留给后续历史数据修复或一次性迁移场景；
+// - 正常 bind / unbind 流程不要再调用这里，避免把“旧身份复用”偷偷带回正式实现。
 func (r *Repository) Rebind(ctx context.Context, row *NodeDAO.Row) error {
 	result, err := CommonRepo.DB().ExecContext(ctx, `UPDATE edge_clients SET
 		main_account_id = ?, name = ?, client_ip = ?, base_url = ?, docker_api_url = ?, os = ?, arch = ?,
@@ -193,21 +204,19 @@ func (r *Repository) Rebind(ctx context.Context, row *NodeDAO.Row) error {
 	return nil
 }
 
-// Unbind 解除当前节点的中心归属，但保留原 clientId 和历史审计链路。
+// Unbind 删除当前有效绑定结果，但保留历史审计链路。
 //
 // 设计边界：
-// - unbind 不是删节点，而是把节点收回到“未绑定但身份保留”的中心状态；
-// - 这里不删除记录，不回收 clientSequence，不改 clientId；
+// - 当前需求已经明确：unbind 之后不能继续保留一个可直接复用的有效中心身份；
+// - 因此这里直接物理删除 `edge_clients` 当前记录，让后续 bind 必须重新分配新的 clientId；
+// - 历史审计不在这张表里回收，edge_client_bind_logs 仍保留完整治理留痕；
 // - 业务层如需清理 Client 本地 JSON，必须在 repository 之外继续走 Edge API。
 func (r *Repository) Unbind(ctx context.Context, clientID string, updatedAt int64) error {
-	result, err := CommonRepo.DB().ExecContext(ctx, `UPDATE edge_clients SET
-		main_account_id = '', discovery_status = 'blocked', discovery_reason = 'not_bound',
-		push_status = 'pending', last_error = '', updated_at = ?
-		WHERE client_id = ? AND deleted_at = 0`,
-		updatedAt, clientID,
-	)
+	_ = updatedAt
+	result, err := CommonRepo.DB().ExecContext(ctx, `DELETE FROM edge_clients
+		WHERE client_id = ? AND deleted_at = 0`, clientID)
 	if err != nil {
-		return fmt.Errorf("update edge_clients unbind failed: %w", err)
+		return fmt.Errorf("delete edge_clients on unbind failed: %w", err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {

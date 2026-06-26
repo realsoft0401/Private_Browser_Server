@@ -707,7 +707,7 @@ Edge Client 发 UDP beacon
 
 ```text
 管理员/上游发起 unbind
-  -> Node Server 解除中心归属
+  -> Node Server 删除当前有效绑定结果
   -> 写 unbind 日志
   -> 调 Edge 清空本地 node-registration.json
   -> 失败留痕但不回滚解绑
