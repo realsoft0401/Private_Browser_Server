@@ -56,6 +56,8 @@ func Setup() *gin.Engine {
 	edgeClients.GET("/discovered", NodeService.ListDiscovered)
 	edgeClients.POST("/bind", BindService.BindClient)
 	edgeClients.POST("/:clientId/unbind", BindService.UnbindClient)
+	edgeClients.POST("/:clientId/recheck", NodeService.RecheckClient)
+	edgeClients.POST("/:clientId/confirm-address-update", NodeService.ConfirmAddressUpdate)
 	edgeClients.POST("/:clientId/push-client-id", BindService.PushClientID)
 	edgeClients.GET("", NodeService.ListBoundClients)
 	edgeClients.GET("/:clientId", NodeService.GetBoundClient)

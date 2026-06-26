@@ -427,6 +427,178 @@ paths:
                   value:
                     code: 1005
                     message: edge client not found
+  /api/v1/edge-clients/{clientId}/recheck:
+    post:
+      tags: [Nodes]
+      summary: Recheck edge client session
+      description: |
+        节点治理接口。
+
+        当前业务语义名统一叫“会话校验”，技术接口名保持 `recheck`。
+
+        执行顺序：
+        1. Node Server 根据 `clientId` 读取当前正式节点
+        2. 调用目标 Client `/health`
+        3. 调用目标 Client `/api/v1/edge/device-info`
+        4. 对比当前中心记录与最新设备事实
+        5. 刷新 `health_status / discovery_status / discovery_reason / last_error / last_checked_at`
+
+        关键规则：
+        - `recheck` 只负责重新确认当前节点会话是否仍然有效
+        - `recheck` 不重新 bind，不生成新的 `clientId`
+        - `recheck` 不自动确认 IP 漂移
+        - 如果发现事实冲突，应明确收口为 `ip_mismatch` 或 `identity_changed`
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 原因：第一版会话校验只是一轮同步重探测，同步 HTTP 已足够表达最终治理结果
+      parameters:
+        - $ref: '#/components/parameters/ClientID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecheckRequest'
+            examples:
+              default:
+                value:
+                  source: manual-recheck
+      responses:
+        '200':
+          description: Recheck result
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseRecheck'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success_verified:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190002'
+                      status: rechecked
+                      healthStatus: healthy
+                      discoveryStatus: verified
+                      discoveryReason: ''
+                      checkedAt: 1782500001
+                success_identity_changed:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190002'
+                      status: rechecked
+                      healthStatus: healthy
+                      discoveryStatus: blocked
+                      discoveryReason: identity_changed
+                      checkedAt: 1782500001
+                invalid_body:
+                  value:
+                    code: 1002
+                    message: recheck request body 非法
+                client_not_found:
+                  value:
+                    code: 1005
+                    message: edge client not found
+                probe_failed:
+                  value:
+                    code: 1005
+                    message: 'recheck probe failed: GET http://192.168.111.119:3300/health: context deadline exceeded'
+  /api/v1/edge-clients/{clientId}/confirm-address-update:
+    post:
+      tags: [Nodes]
+      summary: Confirm address update for edge client
+      description: |
+        节点治理接口。
+
+        这条接口用于在“会话校验 / recheck”已经发现 `ip_mismatch` 后，
+        由管理员明确确认这仍然是同一台 Client，并把中心记录更新到新的 `clientIp / baseUrl`。
+
+        执行顺序：
+        1. Node Server 根据 `clientId` 读取当前正式节点
+        2. 读取管理员提交的新 `clientIp / baseUrl`
+        3. 对新地址执行 `/health`
+        4. 对新地址执行 `/api/v1/edge/device-info`
+        5. 校验设备事实是否仍匹配原节点
+        6. 只有校验通过或形成明确治理结论后，才更新中心地址
+
+        关键规则：
+        - 必须先 `recheck` 发现问题，再人工发起 `confirm-address-update`
+        - 这条接口不重新 bind，不生成新的 `clientId`
+        - 这条接口不能跳过“新地址探测”直接改库
+        - 如果新地址事实冲突，应收口为 `identity_changed`
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 原因：第一版地址确认更新仍是同步治理动作，同步 HTTP 足够表达最终结果
+      parameters:
+        - $ref: '#/components/parameters/ClientID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmAddressUpdateRequest'
+            examples:
+              default:
+                value:
+                  clientIp: 192.168.111.120
+                  baseUrl: http://192.168.111.120:3300
+                  source: manual-confirm-address-update
+      responses:
+        '200':
+          description: Confirm address update result
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseConfirmAddressUpdate'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success_verified:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190002'
+                      oldClientIp: 192.168.111.119
+                      newClientIp: 192.168.111.120
+                      oldBaseUrl: http://192.168.111.119:3300
+                      newBaseUrl: http://192.168.111.120:3300
+                      healthStatus: healthy
+                      discoveryStatus: verified
+                      discoveryReason: ''
+                      updatedAt: 1782501001
+                success_identity_changed:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190002'
+                      oldClientIp: 192.168.111.119
+                      newClientIp: 192.168.111.120
+                      oldBaseUrl: http://192.168.111.119:3300
+                      newBaseUrl: http://192.168.111.120:3300
+                      healthStatus: healthy
+                      discoveryStatus: blocked
+                      discoveryReason: identity_changed
+                      updatedAt: 1782501001
+                invalid_body:
+                  value:
+                    code: 1002
+                    message: confirm-address-update request body 非法
+                client_not_found:
+                  value:
+                    code: 1005
+                    message: edge client not found
+                probe_failed:
+                  value:
+                    code: 1005
+                    message: 'confirm-address-update probe failed: GET http://192.168.111.120:3300/health: context deadline exceeded'
   /api/v1/edge-clients:
     get:
       tags: [Nodes]
@@ -588,6 +760,20 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/UnbindResponse'
+    ApiResponseRecheck:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/RecheckResponse'
+    ApiResponseConfirmAddressUpdate:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ConfirmAddressUpdateResponse'
     ApiResponseBoundClientList:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
@@ -844,6 +1030,28 @@ components:
           type: string
           description: 本次解绑来源说明；不传时服务端默认记为 `node-unbind`
           example: manual-unbind
+    RecheckRequest:
+      type: object
+      properties:
+        source:
+          type: string
+          description: 本次会话校验来源说明；不传时服务端默认记为 `manual-recheck`
+          example: manual-recheck
+    ConfirmAddressUpdateRequest:
+      type: object
+      properties:
+        clientIp:
+          type: string
+          description: 管理员确认后的新 Client 内网地址
+          example: 192.168.111.120
+        baseUrl:
+          type: string
+          description: 管理员确认后的新 Edge HTTP 入口
+          example: http://192.168.111.120:3300
+        source:
+          type: string
+          description: 本次地址确认更新来源说明
+          example: manual-confirm-address-update
     BoundClient:
       type: object
       description: 正式已绑定节点
@@ -978,6 +1186,74 @@ components:
           format: int64
           description: 中心解绑完成时间
           example: 1782218700
+    RecheckResponse:
+      type: object
+      properties:
+        clientId:
+          type: string
+          description: 当前执行会话校验的中心节点身份
+          example: 9060901190002
+        status:
+          type: string
+          description: 当前固定为 rechecked
+          example: rechecked
+        healthStatus:
+          type: string
+          description: 本次会话校验后的健康状态摘要
+          example: healthy
+        discoveryStatus:
+          type: string
+          description: 本次会话校验后的发现可信度摘要
+          example: verified
+        discoveryReason:
+          type: string
+          description: 若会话校验发现异常，这里返回阻断原因
+          example: identity_changed
+        checkedAt:
+          type: integer
+          format: int64
+          description: 本次会话校验完成时间
+          example: 1782500001
+    ConfirmAddressUpdateResponse:
+      type: object
+      properties:
+        clientId:
+          type: string
+          description: 当前执行地址确认更新的中心节点身份
+          example: 9060901190002
+        oldClientIp:
+          type: string
+          description: 旧的中心登记 Client IP
+          example: 192.168.111.119
+        newClientIp:
+          type: string
+          description: 新的中心登记 Client IP
+          example: 192.168.111.120
+        oldBaseUrl:
+          type: string
+          description: 旧的中心登记 Edge HTTP 入口
+          example: http://192.168.111.119:3300
+        newBaseUrl:
+          type: string
+          description: 新的中心登记 Edge HTTP 入口
+          example: http://192.168.111.120:3300
+        healthStatus:
+          type: string
+          description: 地址更新后的健康状态摘要
+          example: healthy
+        discoveryStatus:
+          type: string
+          description: 地址更新后的发现可信度摘要
+          example: verified
+        discoveryReason:
+          type: string
+          description: 若新地址事实冲突，这里返回治理原因
+          example: identity_changed
+        updatedAt:
+          type: integer
+          format: int64
+          description: 本次地址确认更新完成时间
+          example: 1782501001
     BoundClientListData:
       type: object
       properties:

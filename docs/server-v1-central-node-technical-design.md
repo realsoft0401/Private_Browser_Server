@@ -792,6 +792,28 @@ Platform Server 决定是否允许
 2. unbind
 3. recheck
 
+## 13.5 `recheck` 节点治理动作边界
+
+定位：
+
+- 管理员手动触发的节点重探测动作
+- 中文业务语义名统一叫“会话校验”
+
+负责：
+
+1. 重新调用 Client `/health`
+2. 重新调用 Client `/api/v1/edge/device-info`
+3. 重新校验 `clientIp / baseUrl / hostname / os / arch / docker` 摘要
+4. 刷新 `health_status / discovery_status / discovery_reason / last_error / last_checked_at`
+
+不负责：
+
+1. 不重新 bind
+2. 不生成新的 `clientId`
+3. 不自动确认 IP 漂移
+4. 不自动覆盖 `identity_changed / ip_mismatch`
+5. 不直接放行业务 run
+
 ## 13.4 `client_run_quotas`
 
 定位：

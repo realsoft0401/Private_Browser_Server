@@ -356,6 +356,122 @@ func (r *Repository) UpdateDeviceFacts(ctx context.Context, row *NodeDAO.Row) er
 	return nil
 }
 
+// UpdateSessionCheckResult 负责把一次“会话校验 / recheck”的最终摘要回写到中心节点表。
+//
+// 设计来源：
+// - 会话校验的核心不是重新 bind，而是刷新 Node 自己对这台节点“是否仍可信”的判断；
+// - 这次判断既可能成功恢复为 `healthy + verified`，也可能收口为 `blocked + probe_failed`；
+// - 因此这里把“设备摘要刷新”和“治理状态刷新”合并到同一次受控更新里，避免 Service 层散着改多张字段。
+//
+// 职责边界：
+// - 允许更新设备摘要、健康摘要、discovery 摘要和错误字段；
+// - 不修改 `client_id`、`main_account_id`、`client_sequence` 这些中心身份字段；
+// - 不在这里自动改地址治理策略，地址确认更新应走独立接口。
+func (r *Repository) UpdateSessionCheckResult(ctx context.Context, row *NodeDAO.Row) error {
+	if row == nil {
+		return fmt.Errorf("node row 不能为空")
+	}
+	result, err := CommonRepo.DB().ExecContext(ctx, `UPDATE edge_clients SET
+		docker_api_url = CASE WHEN ? <> '' THEN ? ELSE docker_api_url END,
+		os = CASE WHEN ? <> '' THEN ? ELSE os END,
+		arch = CASE WHEN ? <> '' THEN ? ELSE arch END,
+		cpu_cores = CASE WHEN ? > 0 THEN ? ELSE cpu_cores END,
+		memory_total_mb = CASE WHEN ? > 0 THEN ? ELSE memory_total_mb END,
+		docker_version = CASE WHEN ? <> '' THEN ? ELSE docker_version END,
+		health_status = CASE WHEN ? <> '' THEN ? ELSE health_status END,
+		discovery_status = CASE WHEN ? <> '' THEN ? ELSE discovery_status END,
+		discovery_reason = ?,
+		last_checked_at = CASE WHEN ? > 0 THEN ? ELSE last_checked_at END,
+		last_error = ?,
+		updated_at = CASE WHEN ? > 0 THEN ? ELSE updated_at END
+		WHERE client_id = ? AND deleted_at = 0`,
+		row.DockerAPIURL, row.DockerAPIURL,
+		row.OS, row.OS,
+		row.Arch, row.Arch,
+		row.CPUCores, row.CPUCores,
+		row.MemoryTotalMB, row.MemoryTotalMB,
+		row.DockerVersion, row.DockerVersion,
+		row.HealthStatus, row.HealthStatus,
+		row.DiscoveryStatus, row.DiscoveryStatus,
+		row.DiscoveryReason,
+		row.LastCheckedAt, row.LastCheckedAt,
+		row.LastError,
+		row.UpdatedAt, row.UpdatedAt,
+		row.ClientID,
+	)
+	if err != nil {
+		return fmt.Errorf("update edge_clients session check result failed: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read rows affected failed: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateAddressAndSessionCheckResult 负责在管理员确认后更新中心节点地址，并同步回写一次节点治理摘要。
+//
+// 设计来源：
+// - `confirm-address-update` 的职责不是重新 bind，而是把“确认仍是同一台机器”的新地址写回中心；
+// - 地址写回之后，仍然要同时刷新健康状态、发现状态和设备摘要，避免出现“地址改了但摘要还是旧的”；
+// - 因此这里单独提供一个“地址 + 治理摘要”的受控更新入口，避免 Service 层拼多条 SQL。
+//
+// 职责边界：
+// - 允许更新 `client_ip / base_url` 以及治理摘要字段；
+// - 不修改 `client_id / main_account_id / client_sequence`；
+// - 不做地址探测与冲突判断，这些由 Service 层负责后再调用这里落库。
+func (r *Repository) UpdateAddressAndSessionCheckResult(ctx context.Context, row *NodeDAO.Row) error {
+	if row == nil {
+		return fmt.Errorf("node row 不能为空")
+	}
+	result, err := CommonRepo.DB().ExecContext(ctx, `UPDATE edge_clients SET
+		client_ip = CASE WHEN ? <> '' THEN ? ELSE client_ip END,
+		base_url = CASE WHEN ? <> '' THEN ? ELSE base_url END,
+		docker_api_url = CASE WHEN ? <> '' THEN ? ELSE docker_api_url END,
+		os = CASE WHEN ? <> '' THEN ? ELSE os END,
+		arch = CASE WHEN ? <> '' THEN ? ELSE arch END,
+		cpu_cores = CASE WHEN ? > 0 THEN ? ELSE cpu_cores END,
+		memory_total_mb = CASE WHEN ? > 0 THEN ? ELSE memory_total_mb END,
+		docker_version = CASE WHEN ? <> '' THEN ? ELSE docker_version END,
+		health_status = CASE WHEN ? <> '' THEN ? ELSE health_status END,
+		discovery_status = CASE WHEN ? <> '' THEN ? ELSE discovery_status END,
+		discovery_reason = ?,
+		last_checked_at = CASE WHEN ? > 0 THEN ? ELSE last_checked_at END,
+		last_error = ?,
+		updated_at = CASE WHEN ? > 0 THEN ? ELSE updated_at END
+		WHERE client_id = ? AND deleted_at = 0`,
+		row.ClientIP, row.ClientIP,
+		row.BaseURL, row.BaseURL,
+		row.DockerAPIURL, row.DockerAPIURL,
+		row.OS, row.OS,
+		row.Arch, row.Arch,
+		row.CPUCores, row.CPUCores,
+		row.MemoryTotalMB, row.MemoryTotalMB,
+		row.DockerVersion, row.DockerVersion,
+		row.HealthStatus, row.HealthStatus,
+		row.DiscoveryStatus, row.DiscoveryStatus,
+		row.DiscoveryReason,
+		row.LastCheckedAt, row.LastCheckedAt,
+		row.LastError,
+		row.UpdatedAt, row.UpdatedAt,
+		row.ClientID,
+	)
+	if err != nil {
+		return fmt.Errorf("update edge_clients address and session check result failed: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read rows affected failed: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }

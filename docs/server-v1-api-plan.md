@@ -98,13 +98,15 @@
 
 这组不是第一天就必须写，但属于节点治理域，应保留在 Phase A 末尾：
 
-- `POST /api/v1/edge-clients/{clientId}/refresh`
+- `POST /api/v1/edge-clients/{clientId}/recheck`
 - `POST /api/v1/edge-clients/{clientId}/confirm-address-update`
 
 说明：
 
-- `refresh` 用于强制重探 `/health + /device-info`
+- `recheck` 用于强制重探 `/health + /device-info`
+- `recheck` 的中文业务语义名统一叫“会话校验”
 - `confirm-address-update` 用于管理员确认 IP 漂移后的地址更新
+- 顺序必须固定为：先 `recheck` 发现 `ip_mismatch`，再由管理员发起 `confirm-address-update`
 
 ## 5. Phase B：环境聚合查询 API
 
@@ -243,7 +245,7 @@ V1 明确不进主线：
 ### 当前还没开始但必须补的
 
 - `POST /api/v1/edge-clients/{clientId}/unbind`
-- `POST /api/v1/edge-clients/{clientId}/refresh`
+- `POST /api/v1/edge-clients/{clientId}/recheck`
 - `POST /api/v1/edge-clients/{clientId}/confirm-address-update`
 - `GET /api/v1/browser-envs`
 - `GET /api/v1/browser-envs/{envId}`
@@ -273,7 +275,7 @@ V1 明确不进主线：
 ### 第二步
 
 - 先补 `server_browser_envs` 查询 API
-- 只做列表 / 详情 / refresh
+- 只做列表 / 详情 / recheck
 
 ### 第三步
 
