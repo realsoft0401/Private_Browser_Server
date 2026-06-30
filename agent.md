@@ -22,3 +22,13 @@
   - SSE 事件草案
   - 示例 payload
 - 如果发现已经把同一能力拆成太多 md，应优先做文档合并和入口清理，再继续扩展内容。
+
+## 镜像版本治理规则
+
+- Node Server 侧讨论镜像版本时，必须先区分：
+  - slot 默认基础镜像
+  - slot 当前实际基础镜像
+  - browser-env 正式运行镜像
+- 修改默认基础镜像，只影响后续新建 slot 或显式 reinit 的 slot；不能把已存在 slot 自动视为升级成功。
+- 老 slot 基础镜像升级必须是显式治理动作，成功后仍视为原 slot 恢复 `waiting`，而不是新建一条 slot 资源。
+- browser-env 的 `runtime.image` 不得因为 slot 默认基础镜像变化被自动改写；Node 只能显式编排这类升级动作，不能隐式漂移。

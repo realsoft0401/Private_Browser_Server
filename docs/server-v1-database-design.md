@@ -103,6 +103,12 @@ Server 正式保存：
 
 这类“当前关系子表”不做软删除；解绑、缩容或关系失效时直接物理删除，历史统一看日志。
 
+补充：
+
+- `edge_client_slots` 后续如增加 `runtime_image` 字段，表示该 slot 当前实际基础镜像版本。
+- 该字段不等于 Client 当前默认 `slot_runtime.image`。
+- 老 slot 升级基础镜像必须通过显式重初始化后更新该字段，不能因为默认值变化批量改写。
+
 注意：
 
 - 软删除不代表还能继续业务放行
@@ -135,6 +141,7 @@ Server 正式保存：
 - `edge_client_slots`
   - node-slot 当前关系子表
   - 只保存当前 `client_id` 下正式存在的 slot 关系
+  - 如后续增加 `runtime_image` 字段，只表达 slot 当前实际基础镜像，不表达系统默认值
 
 - `edge_client_slot_logs`
   - slot 资源动作与异常历史
@@ -143,6 +150,7 @@ Server 正式保存：
 - `server_browser_envs`
   - browser-env 中心聚合表
   - 通过 `current_slot_id` 引用 slot，不复制 slot 状态机
+  - 如后续增加 `runtime_image` 字段，表示该 env 当前正式运行镜像，而不是 slot 默认基础镜像
 
 - `server_tasks`
   - 中心任务事实表
@@ -227,6 +235,18 @@ deleted_at
   - 账号下设备序号
   - 按 `MAX(client_sequence)+1` 分配
   - 不回收
+
+### slot 摘要与镜像治理字段补充原则
+
+- `edge_clients` 上只保存节点级 slot 数量摘要，不保存“全节点统一当前镜像版本”这种会误导治理的字段。
+- 原因：
+  - 默认基础镜像版本可能已经变成 `1.2`
+  - 但某些老 slot 仍然实际跑在 `1.1`
+  - 如果把默认值直接放大成节点当前真相，就会造成错误调度和错误排障
+- 因此镜像版本事实应保持：
+  - 默认基础镜像：配置层事实
+  - slot 当前实际 `runtimeImage`：slot 关系层事实
+  - browser-env 正式 `runtime.image`：browser-env 聚合层事实
 
 ### 地址与设备事实
 

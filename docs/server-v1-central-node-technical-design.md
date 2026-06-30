@@ -208,6 +208,21 @@ Platform Server
 5. browser-env 生命周期 API
 6. WebVNC / CDP 地址摘要
 
+### Edge Client 向 Node Server 暴露的镜像版本事实
+
+1. slot 默认基础镜像配置
+2. 每个 slot 当前实际 `runtimeImage`
+3. 每个 browser-env 当前正式 `runtime.image`
+
+约束：
+
+- Node Server 不能把“默认基础镜像”误当成“所有 slot 当前实际镜像”
+- Node Server 不能因为默认值变更就自动认定老 slot 已升级
+- Node Server 如果后续编排镜像升级，必须显式区分：
+  1. 改默认值
+  2. 升级某个已有 slot 基础镜像
+  3. 升级某个 browser-env 正式运行镜像
+
 ### Node Server 对 Edge Client 的治理要求
 
 1. 可发现
@@ -215,6 +230,13 @@ Platform Server
 3. 可治理
 4. 可留痕
 5. 可阻断
+
+镜像治理补充：
+
+1. Node 可以决定后续新建 slot 使用哪个默认基础镜像
+2. Node 可以显式触发某个 waiting slot 的基础镜像重初始化升级
+3. Node 可以显式触发某个 browser-env 的正式运行镜像变更
+4. Node 不能因为默认镜像从 `1.1` 变成 `1.2`，就自动覆盖老 slot 或老 env 的当前镜像事实
 
 约束：
 
