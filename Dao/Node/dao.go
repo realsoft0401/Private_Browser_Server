@@ -17,6 +17,13 @@ type Row struct {
 	DiscoveryStatus         string
 	DiscoveryReason         string
 	PushStatus              string
+	TargetSlotCount         int64
+	ActualSlotCount         int64
+	AvailableSlotCount      int64
+	RunningSlotCount        int64
+	SlotExceptionStatus     string
+	SlotExceptionReason     string
+	LastSlotCheckedAt       int64
 	APIKeyHash              string
 	LastDiscoveredAt        int64
 	LastHeartbeatAt         int64

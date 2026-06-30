@@ -2,6 +2,8 @@ package Task
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	TaskDAO "private_browser_server/Dao/Task"
@@ -10,6 +12,8 @@ import (
 )
 
 type Repository struct{}
+
+var ErrNotFound = errors.New("server task not found")
 
 func NewRepository() *Repository {
 	return &Repository{}
@@ -42,7 +46,45 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*TaskModel.ServerT
 		&item.ErrorMessage, &item.Suggestion, &item.CreatedAt, &item.UpdatedAt, &item.FinishedAt,
 	)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		return nil, fmt.Errorf("query server_tasks failed: %w", err)
 	}
 	return &item, nil
+}
+
+func (r *Repository) UpdateStatus(ctx context.Context, row *TaskDAO.Row) error {
+	if row == nil {
+		return fmt.Errorf("task row 不能为空")
+	}
+	result, err := CommonRepo.DB().ExecContext(ctx, `UPDATE server_tasks SET
+		status = CASE WHEN ? <> '' THEN ? ELSE status END,
+		edge_task_id = CASE WHEN ? <> '' THEN ? ELSE edge_task_id END,
+		events_url = CASE WHEN ? <> '' THEN ? ELSE events_url END,
+		error_message = ?,
+		suggestion = ?,
+		updated_at = CASE WHEN ? > 0 THEN ? ELSE updated_at END,
+		finished_at = CASE WHEN ? > 0 THEN ? ELSE finished_at END
+		WHERE id = ?`,
+		row.Status, row.Status,
+		row.EdgeTaskID, row.EdgeTaskID,
+		row.EventsURL, row.EventsURL,
+		row.ErrorMessage,
+		row.Suggestion,
+		row.UpdatedAt, row.UpdatedAt,
+		row.FinishedAt, row.FinishedAt,
+		row.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("update server_tasks status failed: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read rows affected failed: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

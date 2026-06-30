@@ -98,6 +98,13 @@ func createTables() error {
 			discovery_status TEXT NOT NULL DEFAULT 'blocked',
 			discovery_reason TEXT NOT NULL DEFAULT 'not_bound',
 			push_status TEXT NOT NULL DEFAULT 'pending',
+			target_slot_count INTEGER NOT NULL DEFAULT 0,
+			actual_slot_count INTEGER NOT NULL DEFAULT 0,
+			available_slot_count INTEGER NOT NULL DEFAULT 0,
+			running_slot_count INTEGER NOT NULL DEFAULT 0,
+			slot_exception_status TEXT NOT NULL DEFAULT 'normal',
+			slot_exception_reason TEXT NOT NULL DEFAULT '',
+			last_slot_checked_at INTEGER NOT NULL DEFAULT 0,
 			api_key_hash TEXT NOT NULL DEFAULT '',
 			last_discovered_at INTEGER NOT NULL DEFAULT 0,
 			last_heartbeat_at INTEGER NOT NULL DEFAULT 0,
@@ -121,6 +128,47 @@ func createTables() error {
 			action TEXT NOT NULL DEFAULT '',
 			result TEXT NOT NULL DEFAULT '',
 			message TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL DEFAULT 0
+		)`,
+		// edge_client_slots 是 Node Server 当前绑定关系下的 slot 明细缓存。
+		//
+		// 设计边界：
+		// - 这里只保存中心对账后的 slot 摘要，最终 slot 事实仍以 Client 返回为准；
+		// - 不保存 profile、浏览器资产正文，也不把这里做成第二套 Edge 运行数据库；
+		// - 后续 rebind / slot_reconcile 都围绕这张表刷新当前绑定关系下的 slot 视图。
+		`CREATE TABLE IF NOT EXISTS edge_client_slots (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			client_id TEXT NOT NULL DEFAULT '',
+			slot_id TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'waiting',
+			current_env_id TEXT NOT NULL DEFAULT '',
+			current_run_id TEXT NOT NULL DEFAULT '',
+			container_id TEXT NOT NULL DEFAULT '',
+			container_name TEXT NOT NULL DEFAULT '',
+			cdp_port INTEGER NOT NULL DEFAULT 0,
+			vnc_port INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			last_synced_at INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL DEFAULT 0
+		)`,
+		// edge_client_slot_logs 只记录中心层 slot 治理动作留痕。
+		//
+		// 职责边界：
+		// - 它服务管理员排障和审计，不替代 slot 当前事实；
+		// - 当前 slot 当前状态仍看 edge_client_slots；
+		// - SSE 全量事件后续不进库，按需求只保留动作摘要日志。
+		`CREATE TABLE IF NOT EXISTS edge_client_slot_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			client_id TEXT NOT NULL DEFAULT '',
+			slot_id TEXT NOT NULL DEFAULT '',
+			action TEXT NOT NULL DEFAULT '',
+			result TEXT NOT NULL DEFAULT '',
+			env_id TEXT NOT NULL DEFAULT '',
+			run_id TEXT NOT NULL DEFAULT '',
+			message TEXT NOT NULL DEFAULT '',
+			operator_user_id TEXT NOT NULL DEFAULT '',
+			operator_username TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS server_browser_envs (
@@ -197,6 +245,13 @@ func ensureColumns() error {
 			"discovery_status TEXT NOT NULL DEFAULT 'blocked'",
 			"discovery_reason TEXT NOT NULL DEFAULT 'not_bound'",
 			"push_status TEXT NOT NULL DEFAULT 'pending'",
+			"target_slot_count INTEGER NOT NULL DEFAULT 0",
+			"actual_slot_count INTEGER NOT NULL DEFAULT 0",
+			"available_slot_count INTEGER NOT NULL DEFAULT 0",
+			"running_slot_count INTEGER NOT NULL DEFAULT 0",
+			"slot_exception_status TEXT NOT NULL DEFAULT 'normal'",
+			"slot_exception_reason TEXT NOT NULL DEFAULT ''",
+			"last_slot_checked_at INTEGER NOT NULL DEFAULT 0",
 			"api_key_hash TEXT NOT NULL DEFAULT ''",
 			"last_discovered_at INTEGER NOT NULL DEFAULT 0",
 			"last_heartbeat_at INTEGER NOT NULL DEFAULT 0",
@@ -218,6 +273,33 @@ func ensureColumns() error {
 			"action TEXT NOT NULL DEFAULT ''",
 			"result TEXT NOT NULL DEFAULT ''",
 			"message TEXT NOT NULL DEFAULT ''",
+			"created_at INTEGER NOT NULL DEFAULT 0",
+		},
+		"edge_client_slots": {
+			"client_id TEXT NOT NULL DEFAULT ''",
+			"slot_id TEXT NOT NULL DEFAULT ''",
+			"status TEXT NOT NULL DEFAULT 'waiting'",
+			"current_env_id TEXT NOT NULL DEFAULT ''",
+			"current_run_id TEXT NOT NULL DEFAULT ''",
+			"container_id TEXT NOT NULL DEFAULT ''",
+			"container_name TEXT NOT NULL DEFAULT ''",
+			"cdp_port INTEGER NOT NULL DEFAULT 0",
+			"vnc_port INTEGER NOT NULL DEFAULT 0",
+			"last_error TEXT NOT NULL DEFAULT ''",
+			"last_synced_at INTEGER NOT NULL DEFAULT 0",
+			"created_at INTEGER NOT NULL DEFAULT 0",
+			"updated_at INTEGER NOT NULL DEFAULT 0",
+		},
+		"edge_client_slot_logs": {
+			"client_id TEXT NOT NULL DEFAULT ''",
+			"slot_id TEXT NOT NULL DEFAULT ''",
+			"action TEXT NOT NULL DEFAULT ''",
+			"result TEXT NOT NULL DEFAULT ''",
+			"env_id TEXT NOT NULL DEFAULT ''",
+			"run_id TEXT NOT NULL DEFAULT ''",
+			"message TEXT NOT NULL DEFAULT ''",
+			"operator_user_id TEXT NOT NULL DEFAULT ''",
+			"operator_username TEXT NOT NULL DEFAULT ''",
 			"created_at INTEGER NOT NULL DEFAULT 0",
 		},
 		"server_browser_envs": {
@@ -281,7 +363,16 @@ func createIndexes() error {
 		`CREATE INDEX IF NOT EXISTS idx_edge_clients_main_account_id ON edge_clients(main_account_id, deleted_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_edge_clients_health_discovery ON edge_clients(health_status, discovery_status, deleted_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_edge_clients_client_ip ON edge_clients(client_ip, deleted_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_edge_clients_slot_exception ON edge_clients(slot_exception_status, deleted_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_bind_logs_client_created_at ON edge_client_bind_logs(client_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_bind_logs_main_account_created_at ON edge_client_bind_logs(main_account_id, created_at)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_edge_client_slots_client_slot ON edge_client_slots(client_id, slot_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_edge_client_slots_client_status ON edge_client_slots(client_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_edge_client_slots_current_env_id ON edge_client_slots(current_env_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_edge_client_slots_last_synced_at ON edge_client_slots(last_synced_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_edge_client_slot_logs_client_created_at ON edge_client_slot_logs(client_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_edge_client_slot_logs_slot_created_at ON edge_client_slot_logs(slot_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_edge_client_slot_logs_env_created_at ON edge_client_slot_logs(env_id, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_server_browser_envs_main_account_id ON server_browser_envs(main_account_id, deleted_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_server_browser_envs_client_id ON server_browser_envs(client_id, deleted_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_server_browser_envs_status ON server_browser_envs(status, deleted_at)`,

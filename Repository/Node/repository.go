@@ -29,14 +29,18 @@ func (r *Repository) Create(ctx context.Context, row *NodeDAO.Row) error {
 	_, err := CommonRepo.DB().ExecContext(ctx, `INSERT INTO edge_clients (
 		client_id, main_account_id, client_sequence, name, client_ip, base_url, docker_api_url, os, arch,
 		cpu_cores, memory_total_mb, docker_version, health_status, discovery_status, discovery_reason, push_status,
-		api_key_hash, last_discovered_at, last_heartbeat_at, last_heartbeat_reported_at, last_heartbeat_source,
-		last_checked_at, last_error, created_by_user_id, created_by_username, created_at, updated_at, deleted_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		target_slot_count, actual_slot_count, available_slot_count, running_slot_count, slot_exception_status,
+		slot_exception_reason, last_slot_checked_at, api_key_hash, last_discovered_at, last_heartbeat_at,
+		last_heartbeat_reported_at, last_heartbeat_source, last_checked_at, last_error, created_by_user_id,
+		created_by_username, created_at, updated_at, deleted_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.ClientID, row.MainAccountID, row.ClientSequence, row.Name, row.ClientIP, row.BaseURL, row.DockerAPIURL,
 		row.OS, row.Arch, row.CPUCores, row.MemoryTotalMB, row.DockerVersion, row.HealthStatus, row.DiscoveryStatus,
-		row.DiscoveryReason, row.PushStatus, row.APIKeyHash, row.LastDiscoveredAt, row.LastHeartbeatAt,
-		row.LastHeartbeatReportedAt, row.LastHeartbeatSource, row.LastCheckedAt, row.LastError,
-		row.CreatedByUserID, row.CreatedByUsername, row.CreatedAt, row.UpdatedAt, row.DeletedAt,
+		row.DiscoveryReason, row.PushStatus, row.TargetSlotCount, row.ActualSlotCount, row.AvailableSlotCount,
+		row.RunningSlotCount, row.SlotExceptionStatus, row.SlotExceptionReason, row.LastSlotCheckedAt,
+		row.APIKeyHash, row.LastDiscoveredAt, row.LastHeartbeatAt, row.LastHeartbeatReportedAt, row.LastHeartbeatSource,
+		row.LastCheckedAt, row.LastError, row.CreatedByUserID, row.CreatedByUsername, row.CreatedAt, row.UpdatedAt,
+		row.DeletedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert edge_clients failed: %w", err)
@@ -48,8 +52,10 @@ func (r *Repository) ListByMainAccountID(ctx context.Context, mainAccountID stri
 	rows, err := CommonRepo.DB().QueryContext(ctx, `SELECT
 		client_id, main_account_id, client_sequence, name, client_ip, base_url, docker_api_url, os, arch,
 		cpu_cores, memory_total_mb, docker_version, health_status, discovery_status, discovery_reason, push_status,
-		last_discovered_at, last_heartbeat_at, last_heartbeat_reported_at, last_heartbeat_source, last_checked_at,
-		last_error, created_by_user_id, created_by_username, created_at, updated_at, deleted_at
+		target_slot_count, actual_slot_count, available_slot_count, running_slot_count, slot_exception_status,
+		slot_exception_reason, last_slot_checked_at, last_discovered_at, last_heartbeat_at, last_heartbeat_reported_at,
+		last_heartbeat_source, last_checked_at, last_error, created_by_user_id, created_by_username, created_at,
+		updated_at, deleted_at
 		FROM edge_clients WHERE main_account_id = ? AND deleted_at = 0 ORDER BY created_at DESC`, mainAccountID)
 	if err != nil {
 		return nil, fmt.Errorf("query edge_clients failed: %w", err)
@@ -81,8 +87,10 @@ func (r *Repository) GetByClientID(ctx context.Context, clientID string) (*NodeM
 	row := CommonRepo.DB().QueryRowContext(ctx, `SELECT
 		client_id, main_account_id, client_sequence, name, client_ip, base_url, docker_api_url, os, arch,
 		cpu_cores, memory_total_mb, docker_version, health_status, discovery_status, discovery_reason, push_status,
-		last_discovered_at, last_heartbeat_at, last_heartbeat_reported_at, last_heartbeat_source, last_checked_at,
-		last_error, created_by_user_id, created_by_username, created_at, updated_at, deleted_at
+		target_slot_count, actual_slot_count, available_slot_count, running_slot_count, slot_exception_status,
+		slot_exception_reason, last_slot_checked_at, last_discovered_at, last_heartbeat_at, last_heartbeat_reported_at,
+		last_heartbeat_source, last_checked_at, last_error, created_by_user_id, created_by_username, created_at,
+		updated_at, deleted_at
 		FROM edge_clients WHERE client_id = ? AND deleted_at = 0`, clientID)
 	node, err := scanNode(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -98,8 +106,10 @@ func (r *Repository) GetByClientIP(ctx context.Context, clientIP string) (*NodeM
 	row := CommonRepo.DB().QueryRowContext(ctx, `SELECT
 		client_id, main_account_id, client_sequence, name, client_ip, base_url, docker_api_url, os, arch,
 		cpu_cores, memory_total_mb, docker_version, health_status, discovery_status, discovery_reason, push_status,
-		last_discovered_at, last_heartbeat_at, last_heartbeat_reported_at, last_heartbeat_source, last_checked_at,
-		last_error, created_by_user_id, created_by_username, created_at, updated_at, deleted_at
+		target_slot_count, actual_slot_count, available_slot_count, running_slot_count, slot_exception_status,
+		slot_exception_reason, last_slot_checked_at, last_discovered_at, last_heartbeat_at, last_heartbeat_reported_at,
+		last_heartbeat_source, last_checked_at, last_error, created_by_user_id, created_by_username, created_at,
+		updated_at, deleted_at
 		FROM edge_clients WHERE client_ip = ? AND deleted_at = 0`, clientIP)
 	node, err := scanNode(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -115,8 +125,10 @@ func (r *Repository) GetByBaseURL(ctx context.Context, baseURL string) (*NodeMod
 	row := CommonRepo.DB().QueryRowContext(ctx, `SELECT
 		client_id, main_account_id, client_sequence, name, client_ip, base_url, docker_api_url, os, arch,
 		cpu_cores, memory_total_mb, docker_version, health_status, discovery_status, discovery_reason, push_status,
-		last_discovered_at, last_heartbeat_at, last_heartbeat_reported_at, last_heartbeat_source, last_checked_at,
-		last_error, created_by_user_id, created_by_username, created_at, updated_at, deleted_at
+		target_slot_count, actual_slot_count, available_slot_count, running_slot_count, slot_exception_status,
+		slot_exception_reason, last_slot_checked_at, last_discovered_at, last_heartbeat_at, last_heartbeat_reported_at,
+		last_heartbeat_source, last_checked_at, last_error, created_by_user_id, created_by_username, created_at,
+		updated_at, deleted_at
 		FROM edge_clients WHERE base_url = ? AND deleted_at = 0`, baseURL)
 	node, err := scanNode(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -240,6 +252,188 @@ func (r *Repository) UpdateLastError(ctx context.Context, clientID, lastError st
 	}
 	if affected == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateSlotSummary 负责把 Node 对某个 Client 的 slot 汇总摘要受控回写到主节点表。
+//
+// 设计来源：
+// - 文档已经收口：slot 数量、占用数、异常标记要聚合展示在 edge_clients 主表；
+// - 但 slot 明细仍在 edge_client_slots，因此这里单独负责“只改汇总字段”；
+// - 后续 slot_reconcile、rebind 后初始化、管理员治理动作都应通过这里统一更新，避免多处手写不同口径。
+func (r *Repository) UpdateSlotSummary(ctx context.Context, row *NodeDAO.Row) error {
+	if row == nil {
+		return fmt.Errorf("node row 不能为空")
+	}
+	result, err := CommonRepo.DB().ExecContext(ctx, `UPDATE edge_clients SET
+		target_slot_count = CASE WHEN ? >= 0 THEN ? ELSE target_slot_count END,
+		actual_slot_count = CASE WHEN ? >= 0 THEN ? ELSE actual_slot_count END,
+		available_slot_count = CASE WHEN ? >= 0 THEN ? ELSE available_slot_count END,
+		running_slot_count = CASE WHEN ? >= 0 THEN ? ELSE running_slot_count END,
+		slot_exception_status = CASE WHEN ? <> '' THEN ? ELSE slot_exception_status END,
+		slot_exception_reason = ?,
+		last_slot_checked_at = CASE WHEN ? > 0 THEN ? ELSE last_slot_checked_at END,
+		updated_at = CASE WHEN ? > 0 THEN ? ELSE updated_at END
+		WHERE client_id = ? AND deleted_at = 0`,
+		row.TargetSlotCount, row.TargetSlotCount,
+		row.ActualSlotCount, row.ActualSlotCount,
+		row.AvailableSlotCount, row.AvailableSlotCount,
+		row.RunningSlotCount, row.RunningSlotCount,
+		row.SlotExceptionStatus, row.SlotExceptionStatus,
+		row.SlotExceptionReason,
+		row.LastSlotCheckedAt, row.LastSlotCheckedAt,
+		row.UpdatedAt, row.UpdatedAt,
+		row.ClientID,
+	)
+	if err != nil {
+		return fmt.Errorf("update edge_clients slot summary failed: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read rows affected failed: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateTargetSlotCount 只更新中心目标 slot 数和由此推导的异常摘要。
+//
+// 设计来源：
+// - `target_slot_count` 属于中心治理事实，不是 Client 自报事实；
+// - 在平台正式下发接口接入前，需要先允许管理员手工设置这个值；
+// - 这里刻意不改 `actual_slot_count`，避免把中心目标误写成 Client 实际资源结果。
+func (r *Repository) UpdateTargetSlotCount(
+	ctx context.Context,
+	clientID string,
+	targetSlotCount int64,
+	slotExceptionStatus string,
+	slotExceptionReason string,
+	updatedAt int64,
+) error {
+	result, err := CommonRepo.DB().ExecContext(ctx, `UPDATE edge_clients SET
+		target_slot_count = ?,
+		slot_exception_status = CASE WHEN ? <> '' THEN ? ELSE slot_exception_status END,
+		slot_exception_reason = ?,
+		last_slot_checked_at = CASE WHEN ? > 0 THEN ? ELSE last_slot_checked_at END,
+		updated_at = CASE WHEN ? > 0 THEN ? ELSE updated_at END
+		WHERE client_id = ? AND deleted_at = 0`,
+		targetSlotCount,
+		slotExceptionStatus, slotExceptionStatus,
+		slotExceptionReason,
+		updatedAt, updatedAt,
+		updatedAt, updatedAt,
+		clientID,
+	)
+	if err != nil {
+		return fmt.Errorf("update edge_clients target slot count failed: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read rows affected failed: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ReplaceSlots 用一次事务全量刷新当前 Client 的 slot 明细缓存。
+//
+// 设计来源：
+// - 需求已经明确：slot_reconcile 应按 Client 当前返回全量刷新，而不是增量猜；
+// - rebind 后 slot 也要按“空白重新初始化后的全量事实”重建；
+// - 因此这里采用 delete + insert 的显式全量替换，避免保留旧 slot 脏数据。
+func (r *Repository) ReplaceSlots(ctx context.Context, clientID string, slots []NodeDAO.SlotRow) error {
+	if clientID == "" {
+		return fmt.Errorf("clientID 不能为空")
+	}
+	tx, err := CommonRepo.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin replace edge_client_slots transaction failed: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM edge_client_slots WHERE client_id = ?`, clientID); err != nil {
+		return fmt.Errorf("delete edge_client_slots failed: %w", err)
+	}
+	for _, slot := range slots {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO edge_client_slots (
+			client_id, slot_id, status, current_env_id, current_run_id, container_id, container_name,
+			cdp_port, vnc_port, last_error, last_synced_at, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			clientID,
+			slot.SlotID,
+			slot.Status,
+			slot.CurrentEnvID,
+			slot.CurrentRunID,
+			slot.ContainerID,
+			slot.ContainerName,
+			slot.CDPPort,
+			slot.VNCPort,
+			slot.LastError,
+			slot.LastSyncedAt,
+			slot.CreatedAt,
+			slot.UpdatedAt,
+		); err != nil {
+			return fmt.Errorf("insert edge_client_slot %s failed: %w", slot.SlotID, err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit replace edge_client_slots transaction failed: %w", err)
+	}
+	return nil
+}
+
+// ListSlotsByClientID 返回某个已绑定节点当前缓存的 slot 明细。
+func (r *Repository) ListSlotsByClientID(ctx context.Context, clientID string) ([]NodeModel.EdgeClientSlot, error) {
+	rows, err := CommonRepo.DB().QueryContext(ctx, `SELECT
+		id, client_id, slot_id, status, current_env_id, current_run_id, container_id, container_name,
+		cdp_port, vnc_port, last_error, last_synced_at, created_at, updated_at
+		FROM edge_client_slots
+		WHERE client_id = ?
+		ORDER BY slot_id ASC`, clientID)
+	if err != nil {
+		return nil, fmt.Errorf("query edge_client_slots failed: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]NodeModel.EdgeClientSlot, 0)
+	for rows.Next() {
+		var item NodeModel.EdgeClientSlot
+		if err = rows.Scan(
+			&item.ID, &item.ClientID, &item.SlotID, &item.Status, &item.CurrentEnvID, &item.CurrentRunID,
+			&item.ContainerID, &item.ContainerName, &item.CDPPort, &item.VNCPort, &item.LastError,
+			&item.LastSyncedAt, &item.CreatedAt, &item.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan edge_client_slots failed: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate edge_client_slots failed: %w", err)
+	}
+	return result, nil
+}
+
+// CreateSlotLog 记录一次中心层 slot 治理动作留痕。
+func (r *Repository) CreateSlotLog(ctx context.Context, row *NodeDAO.SlotLogRow) error {
+	if row == nil {
+		return fmt.Errorf("slot log row 不能为空")
+	}
+	_, err := CommonRepo.DB().ExecContext(ctx, `INSERT INTO edge_client_slot_logs (
+		client_id, slot_id, action, result, env_id, run_id, message, operator_user_id, operator_username, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		row.ClientID, row.SlotID, row.Action, row.Result, row.EnvID, row.RunID, row.Message,
+		row.OperatorUserID, row.OperatorUsername, row.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("insert edge_client_slot_logs failed: %w", err)
 	}
 	return nil
 }
@@ -482,9 +676,11 @@ func scanNode(row scanner) (NodeModel.EdgeClient, error) {
 		&node.ClientID, &node.MainAccountID, &node.ClientSequence, &node.Name, &node.ClientIP, &node.BaseURL,
 		&node.DockerAPIURL, &node.OS, &node.Arch, &node.CPUCores, &node.MemoryTotalMB, &node.DockerVersion,
 		&node.HealthStatus, &node.DiscoveryStatus, &node.DiscoveryReason, &node.PushStatus,
-		&node.LastDiscoveredAt, &node.LastHeartbeatAt, &node.LastHeartbeatReportedAt, &node.LastHeartbeatSource,
-		&node.LastCheckedAt, &node.LastError, &node.CreatedByUserID, &node.CreatedByUsername,
-		&node.CreatedAt, &node.UpdatedAt, &node.DeletedAt,
+		&node.TargetSlotCount, &node.ActualSlotCount, &node.AvailableSlotCount, &node.RunningSlotCount,
+		&node.SlotExceptionStatus, &node.SlotExceptionReason, &node.LastSlotCheckedAt, &node.LastDiscoveredAt,
+		&node.LastHeartbeatAt, &node.LastHeartbeatReportedAt, &node.LastHeartbeatSource, &node.LastCheckedAt,
+		&node.LastError, &node.CreatedByUserID, &node.CreatedByUsername, &node.CreatedAt, &node.UpdatedAt,
+		&node.DeletedAt,
 	)
 	return node, err
 }

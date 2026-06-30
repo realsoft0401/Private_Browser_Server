@@ -1,5 +1,14 @@
 package Task
 
+const StatusPending = "pending"
+const StatusRunning = "running"
+const StatusSuccess = "success"
+const StatusFailed = "failed"
+
+const EventProgress = "task.progress"
+const EventCompleted = "task.completed"
+const EventFailed = "task.failed"
+
 // ServerTask 是平台级持久任务模型。
 //
 // 设计来源：
@@ -24,4 +33,42 @@ type ServerTask struct {
 	CreatedAt        int64  `json:"createdAt"`
 	UpdatedAt        int64  `json:"updatedAt"`
 	FinishedAt       int64  `json:"finishedAt"`
+}
+
+// Event 是 Node Server 统一 SSE 事件模型。
+type Event struct {
+	Event        string `json:"event"`
+	TaskID       string `json:"taskId"`
+	TaskType     string `json:"taskType"`
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId"`
+	ClientID     string `json:"clientId,omitempty"`
+	EnvID        string `json:"envId,omitempty"`
+	SlotID       string `json:"slotId,omitempty"`
+	Stage        string `json:"stage"`
+	Status       string `json:"status"`
+	Message      string `json:"message,omitempty"`
+	Error        string `json:"error,omitempty"`
+	Suggestion   string `json:"suggestion,omitempty"`
+	Timestamp    string `json:"timestamp"`
+}
+
+type DetailResponse struct {
+	TaskID       string `json:"taskId"`
+	TaskType     string `json:"taskType"`
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId"`
+	Status       string `json:"status"`
+	CurrentStage string `json:"currentStage"`
+	Message      string `json:"message"`
+	EventsURL    string `json:"eventsUrl"`
+	CreatedAt    string `json:"createdAt"`
+	UpdatedAt    string `json:"updatedAt"`
+	FinishedAt   string `json:"finishedAt,omitempty"`
+	Error        string `json:"error,omitempty"`
+	Suggestion   string `json:"suggestion,omitempty"`
+}
+
+func (e Event) GetEvent() string {
+	return e.Event
 }

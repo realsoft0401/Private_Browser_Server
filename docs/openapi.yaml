@@ -599,6 +599,946 @@ paths:
                   value:
                     code: 1005
                     message: 'confirm-address-update probe failed: GET http://192.168.111.120:3300/health: context deadline exceeded'
+  /api/v1/edge-clients/{clientId}/slot-reconcile:
+    post:
+      tags: [Nodes]
+      summary: Reconcile slot relations for edge client (SSE task)
+      description: |
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台按当前中心绑定关系
+        拉取目标 Client 的正式 slot 明细，并重建 Node Server 当前缓存的 node-slot 关系。
+
+        这条接口负责：
+        1. 读取当前中心目标 slot 摘要
+        2. 拉取 Client 当前正式 slot 明细
+        3. 全量刷新 `edge_client_slots`
+        4. 重算 `edge_clients` 上的 slot 摘要
+        5. 输出 `slot 异常` 结论
+
+        关键规则：
+        - 不直接创建 Client 本机 slot
+        - 不直接删除 Client 本机 slot
+        - 不修改平台目标 slot 数
+        - 不自动 run
+
+        这条接口不是同步最终结果接口。调用方必须继续订阅
+        `/api/v1/server-tasks/{taskId}/events`，观察 `task.progress`、`task.completed`、
+        `task.failed` 事件，才能确认本次 slot 对账的最终结论。
+      parameters:
+        - $ref: '#/components/parameters/ClientID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SlotReconcileRequest'
+            examples:
+              default:
+                value:
+                  source: manual-slot-reconcile
+      responses:
+        '200':
+          description: Task accepted
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseTaskAccepted'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                accepted:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      taskId: server-task-1782600001001
+                      taskType: slot_reconcile
+                      resourceType: edge_client
+                      resourceId: '9060901190003'
+                      eventsUrl: /api/v1/server-tasks/server-task-1782600001001/events
+                invalid_body:
+                  value:
+                    code: 1002
+                    message: slot-reconcile request body 非法
+                client_not_found:
+                  value:
+                    code: 1005
+                    message: edge client not found
+                client_not_ready:
+                  value:
+                    code: 1005
+                    message: edge client is not healthy and verified
+  /api/v1/edge-clients/{clientId}/target-slot-count:
+    post:
+      tags: [Nodes]
+      summary: Set target slot count for edge client
+      description: |
+        管理员手工更新中心 `target_slot_count`。
+
+        这条接口当前是平台正式下发链路接入前的临时治理入口，只负责：
+        - 更新 `edge_clients.target_slot_count`
+        - 按当前 `actual_slot_count` 重新计算 `slot_exception_status`
+        - 记录中心治理留痕
+
+        它不负责：
+        - 直接调用 Client 创建 slot
+        - 直接调用 Client 删除 slot
+        - 不自动触发 `slot-reconcile`
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 这是短链路中心治理动作，同步 HTTP 已足够表达结果
+      parameters:
+        - $ref: '#/components/parameters/ClientID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetTargetSlotCountRequest'
+            examples:
+              default:
+                value:
+                  targetSlotCount: 2
+                  source: manual-admin
+      responses:
+        '200':
+          description: Target slot count updated
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseSetTargetSlotCount'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190003'
+                      targetSlotCount: 2
+                      actualSlotCount: 1
+                      availableSlotCount: 1
+                      runningSlotCount: 0
+                      slotExceptionStatus: exception
+                      slotExceptionReason: target_slot_count=2 actual_slot_count=1
+                      updatedAt: 1782731200
+                invalid_body:
+                  value:
+                    code: 1002
+                    message: set-target-slot-count request body 非法
+                invalid_value:
+                  value:
+                    code: 1002
+                    message: targetSlotCount 必须大于 0
+                client_not_found:
+                  value:
+                    code: 1004
+                    message: edge client not found
+  /api/v1/edge-clients/{clientId}/slots:
+    get:
+      tags: [Nodes]
+      summary: List cached slots for edge client
+      description: |
+        返回 Node Server 当前缓存的 node-slot 明细。
+
+        这条接口的结果来自中心缓存：
+        - `edge_client_slots`
+        - `edge_clients` slot 摘要字段
+
+        它不直接穿透调用 Client `/api/v1/edge/slots`。
+
+        口径说明：
+        - `running` 指包挂载运行态
+        - 不指底层 slot 基础容器仅仅处于存活状态
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 它是普通查询接口，只返回当前中心缓存快照
+      parameters:
+        - $ref: '#/components/parameters/ClientID'
+      responses:
+        '200':
+          description: Cached slot list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseEdgeClientSlotList'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190003'
+                      targetSlotCount: 2
+                      actualSlotCount: 1
+                      availableSlotCount: 1
+                      runningSlotCount: 0
+                      slotExceptionStatus: exception
+                      slotExceptionReason: target_slot_count=2 actual_slot_count=1
+                      lastSlotCheckedAt: 1782731200
+                      total: 1
+                      items:
+                        - id: 1
+                          clientId: '9060901190003'
+                          slotId: slot001
+                          status: waiting
+                          currentEnvId: ''
+                          currentRunId: ''
+                          containerId: 1bf54990a75d62a1f2d9f49c5d208f229c3c740f191db70e90bf57c3c20ff744
+                          containerName: private-browser-slot-slot001
+                          cdpPort: 9201
+                          vncPort: 9101
+                          lastError: ''
+                          lastSyncedAt: 1782731200
+                          createdAt: 1782731200
+                          updatedAt: 1782731200
+                client_not_found:
+                  value:
+                    code: 1004
+                    message: edge client not found
+  /api/v1/edge-clients/{clientId}/run-quota:
+    get:
+      tags: [Nodes]
+      summary: Get cached run quota and run admission result
+      description: |
+        返回 Node Server 当前缓存的最近一次平台 run quota 快照，并附带当前 run admission 判断结果。
+
+        这条接口只返回中心缓存与中心判断：
+        - `client_run_quotas`
+        - `edge_clients` 当前健康 / verified / slot 摘要
+
+        它不负责：
+        - 直接向平台实时拉额度
+        - 直接发起 browser-env run
+        - 覆盖 Client 本地 slot 真相
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 它是同步查询接口，一次 HTTP 已足够表达结果
+      parameters:
+        - $ref: '#/components/parameters/ClientID'
+      responses:
+        '200':
+          description: Cached run quota and admission result
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseRunQuota'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success_allowed:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190003'
+                      quotaLimit: 1
+                      quotaUsedSnapshot: 0
+                      quotaAvailableSnapshot: 1
+                      fetchedAt: 1782733000
+                      expiresAt: 1782733300
+                      status: valid
+                      lastError: ''
+                      admission:
+                        allowed: true
+                        status: allowed
+                        reasons: []
+                        suggestion: ''
+                        checkedAt: 1782733005
+                success_blocked:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190003'
+                      quotaLimit: 1
+                      quotaUsedSnapshot: 1
+                      quotaAvailableSnapshot: 0
+                      fetchedAt: 1782733000
+                      expiresAt: 1782733300
+                      status: valid
+                      lastError: ''
+                      admission:
+                        allowed: false
+                        status: blocked
+                        reasons:
+                          - quota_exhausted
+                        suggestion: refresh platform run quota first
+                        checkedAt: 1782733005
+                client_not_found:
+                  value:
+                    code: 1004
+                    message: edge client not found
+  /api/v1/edge-clients/{clientId}/run-quota/refresh:
+    post:
+      tags: [Nodes]
+      summary: Refresh cached run quota snapshot for edge client
+      description: |
+        管理员手工更新当前节点的中心 run quota 快照。
+
+        这条接口当前是平台正式 quota API 接入前的临时治理入口，只负责：
+        - 更新 `client_run_quotas`
+        - 复用当前中心 `run admission` 判断逻辑
+        - 记录额度刷新留痕
+
+        它不负责：
+        - 直接调用平台正式额度接口
+        - 直接发起 browser-env run
+        - 自动修改 `target_slot_count`
+
+        ******** 平台端接好后，这里应改成由 Node 向平台拉最新额度，再写入本地快照。
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 这是短链路中心治理动作，同步 HTTP 已足够表达结果
+      parameters:
+        - $ref: '#/components/parameters/ClientID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRunQuotaRequest'
+            examples:
+              valid:
+                value:
+                  quotaLimit: 1
+                  quotaUsedSnapshot: 0
+                  quotaAvailableSnapshot: 1
+                  expiresAt: 1782733300
+                  status: valid
+                  lastError: ''
+                  source: manual-platform-sync
+      responses:
+        '200':
+          description: Run quota snapshot refreshed
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseRunQuota'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190003'
+                      quotaLimit: 1
+                      quotaUsedSnapshot: 0
+                      quotaAvailableSnapshot: 1
+                      fetchedAt: 1782733000
+                      expiresAt: 1782733300
+                      status: valid
+                      lastError: ''
+                      admission:
+                        allowed: true
+                        status: allowed
+                        reasons: []
+                        suggestion: ''
+                        checkedAt: 1782733005
+                invalid_body:
+                  value:
+                    code: 1002
+                    message: run-quota refresh request body 非法
+                invalid_snapshot:
+                  value:
+                    code: 1002
+                    message: quota snapshot 不能为负数
+                client_not_found:
+                  value:
+                    code: 1004
+                    message: edge client not found
+  /api/v1/browser-envs:
+    get:
+      tags: [BrowserEnvs]
+      summary: List cached browser envs
+      description: |
+        返回 Node Server 当前缓存的 browser-env 列表。
+
+        这条接口当前只读 `server_browser_envs`：
+        - 不直接穿透调用 Edge
+        - 不自动触发 env refresh
+        - 不返回 Edge 资产原文
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 它是普通中心查询接口
+      parameters:
+        - $ref: '#/components/parameters/AccountIDQuery'
+        - name: clientId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 只查看某个节点下的 env
+          example: '9060901190003'
+        - name: userId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 按业务 userId 过滤
+          example: '906090001'
+        - name: rpaType
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 按 RPA 类型过滤
+          example: tk
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 按中心主状态过滤
+          example: running
+      responses:
+        '200':
+          description: Browser env list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseBrowserEnvList'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      total: 1
+                      items:
+                        - envId: '906090001_tk_324867594169356288'
+                          accountId: '906090119'
+                          clientId: '9060901190003'
+                          userId: '906090001'
+                          rpaType: tk
+                          name: tk-main-account
+                          status: running
+                          containerStatus: running
+                          runtimeStatus: running
+                          currentSlotId: slot001
+                          cdpUrl: http://192.168.111.119:9201
+                          webVncUrl: http://192.168.111.119:3300/web-vnc.html?slot=slot001
+                          lastTaskId: server-task-1782800001001
+                          lastError: ''
+                          lastSyncedAt: 1782800010
+                          createdAt: 1782799000
+                          updatedAt: 1782800010
+                          deletedAt: 0
+                missing_account_id:
+                  value:
+                    code: 1002
+                    message: accountId 不能为空
+  /api/v1/browser-envs/{envId}:
+    get:
+      tags: [BrowserEnvs]
+      summary: Get cached browser env detail
+      description: |
+        返回 Node Server 当前缓存的单条 browser-env 聚合摘要。
+
+        当前 detail 只读 `server_browser_envs`：
+        - 不自动穿透调用 Edge
+        - 不自动刷新缓存
+        - 不返回 profile / binding / proxy / browser-data 原文
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 它是普通中心查询接口
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Browser env detail
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseBrowserEnvDetail'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      envId: '906090001_tk_324867594169356288'
+                      accountId: '906090119'
+                      clientId: '9060901190003'
+                      userId: '906090001'
+                      rpaType: tk
+                      name: tk-main-account
+                      status: running
+                      containerStatus: running
+                      runtimeStatus: running
+                      currentSlotId: slot001
+                      cdpUrl: http://192.168.111.119:9201
+                      webVncUrl: http://192.168.111.119:3300/web-vnc.html?slot=slot001
+                      lastTaskId: server-task-1782800001001
+                      lastError: ''
+                      lastSyncedAt: 1782800010
+                      createdAt: 1782799000
+                      updatedAt: 1782800010
+                      deletedAt: 0
+                env_not_found:
+                  value:
+                    code: 1004
+                    message: server browser env not found
+  /api/v1/browser-envs/{envId}/refresh:
+    post:
+      tags: [BrowserEnvs]
+      summary: Refresh cached browser env from Edge detail
+      description: |
+        主动向目标 Edge 拉取一次该 env 的 detail，并刷新 `server_browser_envs` 缓存。
+
+        这条接口当前负责：
+        - 校验目标 env 已经存在于中心
+        - 校验目标节点当前 `healthy + verified`
+        - 拉取一次 Edge `GET /api/v1/edge/browser-envs/{envId}`
+        - 回写中心 env 摘要
+
+        它不负责：
+        - 自动发现新的 env
+        - 创建 server task
+        - 发起任何生命周期动作
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 原因：它是单条 env、单次同步拉取，普通 HTTP 足够表达结果
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Browser env refreshed
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseBrowserEnvRefresh'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      envId: '906090001_tk_324867594169356288'
+                      clientId: '9060901190003'
+                      status: running
+                      runtimeStatus: running
+                      containerStatus: running
+                      currentSlotId: slot001
+                      webVncUrl: http://192.168.111.119:3300/web-vnc.html?slot=slot001
+                      lastTaskId: server-task-1782800001001
+                      lastError: ''
+                      lastSyncedAt: 1782800010
+                env_not_found:
+                  value:
+                    code: 1004
+                    message: server browser env not found
+                node_not_ready:
+                  value:
+                    code: 1005
+                    message: edge client is not healthy and verified
+  /api/v1/browser-envs/{envId}/run:
+    post:
+      tags: [BrowserEnvs]
+      summary: Run browser env from Node Server (SSE task)
+      description: |
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台先执行中心 run admission，
+        再把显式 `slotId` 透传给目标 Edge run，并由中心继续收口最终成功或失败。
+
+        这条接口当前负责：
+        - 读取 `server_browser_envs` 聚合记录
+        - 执行统一中心 run admission
+        - 显式透传 `slotId` 到目标 Client
+        - 创建 `server_tasks`
+        - 通过中心 SSE 收口 Edge run 过程和终态
+
+        关键规则：
+        - 当前必须显式传 `slotId`
+        - Node Server 不自动选 slot
+
+        这条接口不是同步最终结果接口。调用方必须继续订阅
+        `/api/v1/server-tasks/{taskId}/events`，观察 `task.progress`、`task.completed`、
+        `task.failed` 事件，才能确认本次 run 的最终结论。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunBrowserEnvRequest'
+            examples:
+              default:
+                value:
+                  slotId: slot001
+                  forceRecreate: false
+      responses:
+        '200':
+          description: Task accepted
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseTaskAccepted'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                accepted:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      taskId: server-task-1782800001001
+                      taskType: browser_env_run
+                      resourceType: browser_env
+                      resourceId: '906090001_tk_324867594169356288'
+                      eventsUrl: /api/v1/server-tasks/server-task-1782800001001/events
+                invalid_body:
+                  value:
+                    code: 1002
+                    message: browser-env run request body 非法，请检查 slotId
+                invalid_params:
+                  value:
+                    code: 1002
+                    message: 'invalid browser-env run params: envId 和 slotId 不能为空'
+                env_not_found:
+                  value:
+                    code: 1004
+                    message: server browser env not found
+                remote_failed:
+                  value:
+                    code: 1005
+                    message: edge client not found
+  /api/v1/browser-envs/{envId}/stop:
+    post:
+      tags: [BrowserEnvs]
+      summary: Stop browser env from Node Server
+      description: |
+        同步 stop 接口。发起后会直接等待目标 Edge stop 完成，并把停止后的 env 摘要重新同步回中心缓存。
+
+        这条接口当前负责：
+        - 读取 `server_browser_envs` 聚合记录
+        - 校验目标节点当前 `healthy + verified`
+        - 透传正式 `timeoutSeconds` 给目标 Edge stop
+        - 创建一条 `server_tasks` 审计事实
+        - 把停止后的 env 摘要重新同步回中心
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 原因：当前 stop 是短链路同步动作，普通 HTTP 足够表达最终结果
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopBrowserEnvRequest'
+            examples:
+              default:
+                value:
+                  timeoutSeconds: 10
+      responses:
+        '200':
+          description: Browser env stopped
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseBrowserEnvStop'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      envId: '906090001_tk_324867594169356288'
+                      status: stopped
+                      containerStatus: missing
+                      stoppedAt: 1782793527
+                invalid_body:
+                  value:
+                    code: 1002
+                    message: browser-env stop request body 非法，请检查 timeoutSeconds
+                env_not_found:
+                  value:
+                    code: 1004
+                    message: server browser env not found
+                remote_failed:
+                  value:
+                    code: 1005
+                    message: edge client is not healthy and verified
+  /api/v1/browser-envs/{envId}/backup:
+    post:
+      tags: [BrowserEnvs]
+      summary: Backup browser env from Node Server (SSE task)
+      description: |
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台把 backup 转发给目标 Edge，
+        再由中心继续收口最终成功或失败。
+
+        这条接口当前负责：
+        - 读取 `server_browser_envs` 聚合记录
+        - 校验目标节点当前 `healthy + verified`
+        - 创建 `server_tasks`
+        - 调用目标 Edge 正式 backup 接口
+        - 通过中心 SSE 收口 Edge backup 过程和终态
+
+        这条接口不是同步最终结果接口。调用方必须继续订阅
+        `/api/v1/server-tasks/{taskId}/events`，观察 `task.progress`、`task.completed`、
+        `task.failed` 事件，才能确认本次 backup 的最终结论。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Task accepted
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseTaskAccepted'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                accepted:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      taskId: server-task-1782800002001
+                      taskType: browser_env_backup
+                      resourceType: browser_env
+                      resourceId: '906090001_tk_324867594169356288'
+                      eventsUrl: /api/v1/server-tasks/server-task-1782800002001/events
+                env_not_found:
+                  value:
+                    code: 1004
+                    message: server browser env not found
+                remote_failed:
+                  value:
+                    code: 1005
+                    message: edge client is not healthy and verified
+  /api/v1/browser-envs/{envId}/restore:
+    post:
+      tags: [BrowserEnvs]
+      summary: Restore browser env from Node Server (SSE task)
+      description: |
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台把 restore 转发给目标 Edge，
+        再由中心继续收口最终成功或失败。
+
+        这条接口当前负责：
+        - 读取 `server_browser_envs` 聚合记录
+        - 校验目标节点当前 `healthy + verified`
+        - 创建 `server_tasks`
+        - 调用目标 Edge 正式 restore 接口
+        - 通过中心 SSE 收口 Edge restore 过程和终态
+
+        这条接口不是同步最终结果接口。调用方必须继续订阅
+        `/api/v1/server-tasks/{taskId}/events`，观察 `task.progress`、`task.completed`、
+        `task.failed` 事件，才能确认本次 restore 的最终结论。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Task accepted
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseTaskAccepted'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                accepted:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      taskId: server-task-1782800003001
+                      taskType: browser_env_restore
+                      resourceType: browser_env
+                      resourceId: '906090001_tk_324867594169356288'
+                      eventsUrl: /api/v1/server-tasks/server-task-1782800003001/events
+                env_not_found:
+                  value:
+                    code: 1004
+                    message: server browser env not found
+                remote_failed:
+                  value:
+                    code: 1005
+                    message: edge client is not healthy and verified
+  /api/v1/browser-envs/{envId}/package:
+    delete:
+      tags: [BrowserEnvs]
+      summary: Delete browser env package from Node Server (SSE task)
+      description: |
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台把 package delete 转发给目标 Edge，
+        再由中心继续收口最终成功或失败。
+
+        这条接口当前负责：
+        - 读取 `server_browser_envs` 聚合记录
+        - 校验目标节点当前 `healthy + verified`
+        - 创建 `server_tasks`
+        - 调用目标 Edge 正式 package delete 接口
+        - 通过中心 SSE 收口 Edge delete 过程和终态
+        - Edge success 后删除中心当前 env 缓存
+
+        这条接口不是同步最终结果接口。调用方必须继续订阅
+        `/api/v1/server-tasks/{taskId}/events`，观察 `task.progress`、`task.completed`、
+        `task.failed` 事件，才能确认本次 delete 的最终结论。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Task accepted
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseTaskAccepted'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                accepted:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      taskId: server-task-1782800004001
+                      taskType: browser_env_delete_package
+                      resourceType: browser_env
+                      resourceId: '906090001_tk_324867594169356288'
+                      eventsUrl: /api/v1/server-tasks/server-task-1782800004001/events
+                env_not_found:
+                  value:
+                    code: 1004
+                    message: server browser env not found
+                remote_failed:
+                  value:
+                    code: 1005
+                    message: edge client is not healthy and verified
+  /api/v1/browser-envs/{envId}/del:
+    delete:
+      tags: [BrowserEnvs]
+      summary: Delete browser env runtime image from Node Server
+      description: |
+        同步 `/del` 接口。发起后会直接等待目标 Edge 返回镜像清理结果。
+
+        这条接口当前负责：
+        - 读取 `server_browser_envs` 聚合记录
+        - 校验目标节点当前 `healthy + verified`
+        - 调用目标 Edge 正式 `/del`
+        - 回写中心 env 最近同步时间和错误摘要
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 原因：当前 `/del` 是镜像清理同步动作，普通 HTTP 足够表达最终结果
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Delete browser env image response
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseDeleteBrowserEnvImage'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      envId: '906090001_tk_324867594169356288'
+                      image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+                      imageRemoved: true
+                      results:
+                        - image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+                          deleted: sha256:abc123
+                          untagged: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+                      warningMessage: ''
+                      deletedAt: 1782802000
+                env_not_found:
+                  value:
+                    code: 1004
+                    message: server browser env not found
+                remote_failed:
+                  value:
+                    code: 1005
+                    message: edge client is not healthy and verified
+  /api/v1/server-tasks/{taskId}:
+    get:
+      tags: [ServerTasks]
+      summary: Get server task detail
+      description: |
+        查询当前 Node Server 进程内 server task 的摘要。
+
+        这不是 SSE 接口；如果任务仍在执行中，调用方仍应继续订阅
+        `/api/v1/server-tasks/{taskId}/events`。
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+      responses:
+        '200':
+          description: Server task detail
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseServerTaskDetail'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      taskId: server-task-1782800001001
+                      taskType: browser_env_run
+                      resourceType: browser_env
+                      resourceId: '906090001_tk_324867594169356288'
+                      status: running
+                      currentStage: dispatch_edge_run
+                      message: run admission passed, dispatching edge run
+                      eventsUrl: /api/v1/server-tasks/server-task-1782800001001/events
+                      createdAt: '2026-06-30T10:00:00+08:00'
+                      updatedAt: '2026-06-30T10:00:03+08:00'
+                      finishedAt: ''
+                      error: ''
+                      suggestion: ''
+                not_found:
+                  value:
+                    code: 1004
+                    message: server task not found
+  /api/v1/server-tasks/{taskId}/events:
+    get:
+      tags: [ServerTasks]
+      summary: Subscribe server task SSE events (SSE)
+      description: |
+        SSE 事件流接口，返回 `text/event-stream`。
+
+        只要某个中心业务接口说明“立即返回 `taskId/eventsUrl`”，调用方就应该通过这条统一入口
+        继续订阅任务过程，而不是把接单响应误解成最终结果。
+
+        当前事件流会先补发该任务已记录的历史事件，再继续推送后续事件；
+        典型事件包括 `task.progress`、`task.completed`、`task.failed`。
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+      responses:
+        '200':
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
   /api/v1/edge-clients:
     get:
       tags: [Nodes]
@@ -700,6 +1640,22 @@ components:
       schema:
         type: string
       example: '906090119'
+    EnvID:
+      name: envId
+      in: path
+      required: true
+      description: 中心 browser-env 唯一标识，格式固定为 `userId_rpaType_snowflakeId`
+      schema:
+        type: string
+      example: 906090001_tk_324867594169356288
+    TaskID:
+      name: taskId
+      in: path
+      required: true
+      description: 中心 server task ID
+      schema:
+        type: string
+      example: server-task-1782800001001
   schemas:
     ApiResponseBase:
       type: object
@@ -774,6 +1730,69 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/ConfirmAddressUpdateResponse'
+    ApiResponseTaskAccepted:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TaskAcceptedResponse'
+    ApiResponseSetTargetSlotCount:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/SetTargetSlotCountResponse'
+    ApiResponseEdgeClientSlotList:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/EdgeClientSlotListResponse'
+    ApiResponseRunQuota:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/RunQuotaResponse'
+    ApiResponseBrowserEnvList:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BrowserEnvListResponse'
+    ApiResponseBrowserEnvDetail:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ServerBrowserEnv'
+    ApiResponseBrowserEnvRefresh:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/RefreshBrowserEnvResponse'
+    ApiResponseBrowserEnvStop:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/StopBrowserEnvResponse'
+    ApiResponseServerTaskDetail:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ServerTaskDetail'
     ApiResponseBoundClientList:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
@@ -1052,6 +2071,421 @@ components:
           type: string
           description: 本次地址确认更新来源说明
           example: manual-confirm-address-update
+    SlotReconcileRequest:
+      type: object
+      properties:
+        source:
+          type: string
+          description: 本次 slot 对账来源说明
+          example: manual-slot-reconcile
+    SetTargetSlotCountRequest:
+      type: object
+      required: [targetSlotCount]
+      properties:
+        targetSlotCount:
+          type: integer
+          format: int64
+          description: 当前管理员确认的中心目标 slot 数
+          example: 2
+        source:
+          type: string
+          description: 本次目标 slot 数更新来源说明
+          example: manual-admin
+    RefreshRunQuotaRequest:
+      type: object
+      properties:
+        quotaLimit:
+          type: integer
+          format: int64
+          description: 当前平台口径允许该 Client 承载的总 run 数
+          example: 1
+        quotaUsedSnapshot:
+          type: integer
+          format: int64
+          description: 最近一次平台快照中的已使用数量
+          example: 0
+        quotaAvailableSnapshot:
+          type: integer
+          format: int64
+          description: 最近一次平台快照中的剩余可用数量
+          example: 1
+        expiresAt:
+          type: integer
+          format: int64
+          description: 这份快照的过期时间；不传时服务端默认写入当前时间 + 300 秒
+          example: 1782733300
+        status:
+          type: string
+          description: 快照可信状态；不传时服务端默认写入 `valid`
+          example: valid
+        lastError:
+          type: string
+          description: 平台侧最近一次额度异常说明
+          example: ''
+        source:
+          type: string
+          description: 本次额度刷新来源说明
+          example: manual-platform-sync
+    RunBrowserEnvRequest:
+      type: object
+      required: [slotId]
+      properties:
+        slotId:
+          type: string
+          description: 当前明确要让目标 browser-env 运行到哪个 slot；Node 当前阶段不自动选 slot
+          example: slot001
+        forceRecreate:
+          type: boolean
+          description: 是否强制按重建容器链路执行；只允许透传到 Edge 正式 run 协议
+          example: false
+    StopBrowserEnvRequest:
+      type: object
+      properties:
+        timeoutSeconds:
+          type: integer
+          format: int64
+          description: 透传给 Edge 正式 stop 协议的 Docker 优雅停止等待秒数；不传时按服务端默认值执行
+          example: 10
+    ServerBrowserEnv:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: '906090001_tk_324867594169356288'
+        accountId:
+          type: string
+          example: '906090119'
+        clientId:
+          type: string
+          example: '9060901190003'
+        userId:
+          type: string
+          example: '906090001'
+        rpaType:
+          type: string
+          example: tk
+        name:
+          type: string
+          example: tk-main-account
+        status:
+          type: string
+          example: running
+        containerStatus:
+          type: string
+          example: running
+        runtimeStatus:
+          type: string
+          example: running
+        currentSlotId:
+          type: string
+          example: slot001
+        cdpUrl:
+          type: string
+          example: http://192.168.111.119:9201
+        webVncUrl:
+          type: string
+          example: http://192.168.111.119:3300/web-vnc.html?slot=slot001
+        lastTaskId:
+          type: string
+          example: server-task-1782800001001
+        lastError:
+          type: string
+          example: ''
+        lastSyncedAt:
+          type: integer
+          format: int64
+          example: 1782800010
+        createdAt:
+          type: integer
+          format: int64
+          example: 1782799000
+        updatedAt:
+          type: integer
+          format: int64
+          example: 1782800010
+        deletedAt:
+          type: integer
+          format: int64
+          example: 0
+    BrowserEnvListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServerBrowserEnv'
+        total:
+          type: integer
+          example: 1
+    RefreshBrowserEnvResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: '906090001_tk_324867594169356288'
+        clientId:
+          type: string
+          example: '9060901190003'
+        status:
+          type: string
+          example: running
+        runtimeStatus:
+          type: string
+          example: running
+        containerStatus:
+          type: string
+          example: running
+        currentSlotId:
+          type: string
+          example: slot001
+        webVncUrl:
+          type: string
+          example: http://192.168.111.119:3300/web-vnc.html?slot=slot001
+        lastTaskId:
+          type: string
+          example: server-task-1782800001001
+        lastError:
+          type: string
+          example: ''
+        lastSyncedAt:
+          type: integer
+          format: int64
+          example: 1782800010
+    StopBrowserEnvResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: '906090001_tk_324867594169356288'
+        status:
+          type: string
+          example: stopped
+        containerStatus:
+          type: string
+          example: missing
+        stoppedAt:
+          type: integer
+          format: int64
+          example: 1782793527
+    ServerTaskDetail:
+      type: object
+      properties:
+        taskId:
+          type: string
+          example: server-task-1782800001001
+        taskType:
+          type: string
+          example: browser_env_run
+        resourceType:
+          type: string
+          example: browser_env
+        resourceId:
+          type: string
+          example: '906090001_tk_324867594169356288'
+        status:
+          type: string
+          example: running
+        currentStage:
+          type: string
+          example: dispatch_edge_run
+        message:
+          type: string
+          example: run admission passed, dispatching edge run
+        eventsUrl:
+          type: string
+          example: /api/v1/server-tasks/server-task-1782800001001/events
+        createdAt:
+          type: string
+          example: '2026-06-30T10:00:00+08:00'
+        updatedAt:
+          type: string
+          example: '2026-06-30T10:00:03+08:00'
+        finishedAt:
+          type: string
+          example: ''
+        error:
+          type: string
+          example: ''
+        suggestion:
+          type: string
+          example: ''
+    SetTargetSlotCountResponse:
+      type: object
+      properties:
+        clientId:
+          type: string
+          example: '9060901190003'
+        targetSlotCount:
+          type: integer
+          format: int64
+          example: 2
+        actualSlotCount:
+          type: integer
+          format: int64
+          example: 1
+        availableSlotCount:
+          type: integer
+          format: int64
+          example: 1
+        runningSlotCount:
+          type: integer
+          format: int64
+          example: 0
+        slotExceptionStatus:
+          type: string
+          example: exception
+        slotExceptionReason:
+          type: string
+          example: target_slot_count=2 actual_slot_count=1
+        updatedAt:
+          type: integer
+          format: int64
+          example: 1782731200
+    EdgeClientSlot:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        clientId:
+          type: string
+          example: '9060901190003'
+        slotId:
+          type: string
+          example: slot001
+        status:
+          type: string
+          example: waiting
+        currentEnvId:
+          type: string
+          example: ''
+        currentRunId:
+          type: string
+          example: ''
+        containerId:
+          type: string
+          example: 1bf54990a75d62a1f2d9f49c5d208f229c3c740f191db70e90bf57c3c20ff744
+        containerName:
+          type: string
+          example: private-browser-slot-slot001
+        cdpPort:
+          type: integer
+          format: int64
+          example: 9201
+        vncPort:
+          type: integer
+          format: int64
+          example: 9101
+        lastError:
+          type: string
+          example: ''
+        lastSyncedAt:
+          type: integer
+          format: int64
+          example: 1782731200
+        createdAt:
+          type: integer
+          format: int64
+          example: 1782731200
+        updatedAt:
+          type: integer
+          format: int64
+          example: 1782731200
+    EdgeClientSlotListResponse:
+      type: object
+      properties:
+        clientId:
+          type: string
+          example: '9060901190003'
+        targetSlotCount:
+          type: integer
+          format: int64
+          example: 2
+        actualSlotCount:
+          type: integer
+          format: int64
+          example: 1
+        availableSlotCount:
+          type: integer
+          format: int64
+          example: 1
+        runningSlotCount:
+          type: integer
+          format: int64
+          example: 0
+        slotExceptionStatus:
+          type: string
+          example: exception
+        slotExceptionReason:
+          type: string
+          example: target_slot_count=2 actual_slot_count=1
+        lastSlotCheckedAt:
+          type: integer
+          format: int64
+          example: 1782731200
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EdgeClientSlot'
+        total:
+          type: integer
+          example: 1
+    RunAdmissionResult:
+      type: object
+      properties:
+        allowed:
+          type: boolean
+          example: true
+        status:
+          type: string
+          example: allowed
+        reasons:
+          type: array
+          items:
+            type: string
+          example: []
+        suggestion:
+          type: string
+          example: ''
+        checkedAt:
+          type: integer
+          format: int64
+          example: 1782733005
+    RunQuotaResponse:
+      type: object
+      properties:
+        clientId:
+          type: string
+          example: '9060901190003'
+        quotaLimit:
+          type: integer
+          format: int64
+          example: 1
+        quotaUsedSnapshot:
+          type: integer
+          format: int64
+          example: 0
+        quotaAvailableSnapshot:
+          type: integer
+          format: int64
+          example: 1
+        fetchedAt:
+          type: integer
+          format: int64
+          example: 1782733000
+        expiresAt:
+          type: integer
+          format: int64
+          example: 1782733300
+        status:
+          type: string
+          example: valid
+        lastError:
+          type: string
+          example: ''
+        admission:
+          $ref: '#/components/schemas/RunAdmissionResult'
     BoundClient:
       type: object
       description: 正式已绑定节点
@@ -1096,6 +2530,39 @@ components:
           type: string
           description: 最近一次 push-client-id 结果
           example: success
+        targetSlotCount:
+          type: integer
+          format: int64
+          description: 当前中心目标 slot 数
+          example: 2
+        actualSlotCount:
+          type: integer
+          format: int64
+          description: 最近一次 slot 对账得到的实际 slot 数
+          example: 1
+        availableSlotCount:
+          type: integer
+          format: int64
+          description: 最近一次 slot 对账得到的空闲 slot 数
+          example: 1
+        runningSlotCount:
+          type: integer
+          format: int64
+          description: 最近一次 slot 对账得到的包运行中 slot 数
+          example: 0
+        slotExceptionStatus:
+          type: string
+          description: 当前 slot 摘要是否异常
+          example: normal
+        slotExceptionReason:
+          type: string
+          description: 当前 slot 异常原因；正常时为空
+          example: ''
+        lastSlotCheckedAt:
+          type: integer
+          format: int64
+          description: 最近一次 slot 对账完成时间
+          example: 1782731200
         createdAt:
           type: integer
           format: int64
@@ -1254,6 +2721,29 @@ components:
           format: int64
           description: 本次地址确认更新完成时间
           example: 1782501001
+    TaskAcceptedResponse:
+      type: object
+      properties:
+        taskId:
+          type: string
+          description: 当前中心任务 ID
+          example: server-task-1782600001001
+        taskType:
+          type: string
+          description: 当前任务类型
+          example: slot_reconcile
+        resourceType:
+          type: string
+          description: 当前任务资源类型
+          example: edge_client
+        resourceId:
+          type: string
+          description: 当前任务资源主键
+          example: '9060901190003'
+        eventsUrl:
+          type: string
+          description: SSE 事件订阅地址
+          example: /api/v1/server-tasks/server-task-1782600001001/events
     BoundClientListData:
       type: object
       properties:

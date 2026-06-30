@@ -459,6 +459,60 @@ Edge Client 只负责本机状态。
 
 - 边缘本机状态
 
+### slot 正式状态机
+
+这里必须严格贴合当前 Client 的运行模型，不再使用 `occupied / releasing` 这类另一套命名。
+
+slot 正式状态固定只有 4 个：
+
+1. `waiting`
+   - slot 已存在
+   - 当前空闲
+   - 可被 Node 分配给新的 browser-env
+2. `loading`
+   - Client 正在把指定 browser-env 加载到这个 slot
+   - 该 slot 已被占住，不能再次分配
+3. `running`
+   - 该 slot 当前正在承载一个运行中的 browser-env
+4. `ending`
+   - 该 slot 上的 browser-env 正在结束
+   - Client 正在释放运行态并恢复空白容器
+
+正式状态流转固定为：
+
+`waiting -> loading -> running -> ending -> waiting`
+
+约束：
+
+1. slot 状态不沿用节点状态命名，也不直接复用包的 `pending`。
+2. 包主状态仍然看 `pending -> loading -> running -> ending -> pending`。
+3. 资源调度看 slot；用户主视角看包。
+4. `ending` 完成后，slot 必须回到空白 `waiting`。
+
+### slot 数量异常边界
+
+slot 数量问题不按常规治理分支设计，而按异常事件设计。
+
+原因：
+
+1. 平台先给 Node Server 配置某个 Client 应持有多少个 slot。
+2. Node Server 只按这个目标值驱动 Client 创建对应数量的 slot。
+3. 用户后续运行时，只能在这批已经创建出来的 slot 内分配使用。
+
+因此只要创建链路正常：
+
+1. 不应凭空多出 slot。
+2. 不应正常少出 slot。
+3. 不应出现越权新增 slot 的常规业务路径。
+
+正式口径：
+
+1. 正常链路下，不设计“slot 数量漂移”作为常态治理状态。
+2. 如果 Node Server 发现目标 slot 数与 Client 实际 slot 数不一致，应直接视为 `slot 异常`。
+3. `slot 异常` 发生后，必须阻断新的 `run`。
+4. `slot 异常` 不要求继续自动放行业务动作，应提示“该服务器 slot 异常，请联系管理员处理”。
+5. 这类问题优先按非法篡改、脏数据、执行异常或程序错误排查，而不是按正常资源波动处理。
+
 ## 7.3 Node Server 的状态
 
 Node Server 负责中心治理状态。
@@ -708,10 +762,36 @@ Edge Client 发 UDP beacon
 ```text
 管理员/上游发起 unbind
   -> Node Server 删除当前有效绑定结果
+  -> Node Server 删除当前 node-slot 关系
   -> 写 unbind 日志
   -> 调 Edge 清空本地 node-registration.json
   -> 失败留痕但不回滚解绑
 ```
+
+## 12.3.1 rebind 后的 slot 重初始化规则
+
+重新 binding 后，slot 不恢复旧关系，而走一套完整的空白重初始化流程。
+
+正式流程：
+
+```text
+旧绑定已解绑
+  -> 管理员/上游重新发起 bind
+  -> Node Server 建立新的 clientId 关系
+  -> Node Server 驱动 Edge 清空当前全部 slot
+  -> Node Server 按当前目标 slot 数重新初始化空白 slot
+  -> slot 编号从 slot001 开始连续生成
+  -> 初始化完成后自动触发 slot 对账任务
+  -> Node Server 重建 edge_client_slots 与 edge_clients slot 摘要
+```
+
+约束：
+
+1. rebind 后不恢复旧 slot 关系。
+2. rebind 后不读取旧 slot 配置。
+3. rebind 后不恢复旧 env 运行关系。
+4. rebind 后不自动 run。
+5. 重新初始化的 slot 只代表新的空白运行资源池。
 
 ## 12.4 heartbeat 流程
 
@@ -791,6 +871,17 @@ Platform Server 决定是否允许
 1. bind
 2. unbind
 3. recheck
+4. slot_reconcile
+
+## 13.4 `client_run_quotas`
+
+定位：
+
+- Platform -> Node 的额度快照容器
+
+约束：
+
+- `client_run_quotas` 只作为缓存，不作为最终额度事实。
 
 ## 13.5 `recheck` 节点治理动作边界
 
@@ -814,15 +905,45 @@ Platform Server 决定是否允许
 4. 不自动覆盖 `identity_changed / ip_mismatch`
 5. 不直接放行业务 run
 
-## 13.4 `client_run_quotas`
+## 13.6 `slot_reconcile` 节点 slot 对账动作边界
 
 定位：
 
-- Platform -> Node 的额度快照容器
+- Node Server 的中心 slot 收口任务
+- 正式按 task + SSE 设计
+- 用于重建 node-slot 关系缓存和节点 slot 摘要
+
+负责：
+
+1. 读取 `edge_clients` 当前 slot 摘要
+2. 调用 Client 正式 slot 查询接口
+3. 全量刷新 `edge_client_slots`
+4. 重算 `edge_clients` 上的：
+   - `actual_slot_count`
+   - `available_slot_count`
+   - `running_slot_count`
+   - `slot_exception_status`
+   - `slot_exception_reason`
+   - `last_slot_checked_at`
+5. 记录 `edge_client_slot_logs`
+6. 输出 task + SSE 进度与最终结果
+
+不负责：
+
+1. 不直接创建 Client 本机 slot
+2. 不直接删除 Client 本机 slot
+3. 不直接 reinit Client 本机 slot
+4. 不修改平台目标 slot 数
+5. 不自动 run
+6. 不把完整 SSE 历史事件流写入 SQLite
 
 约束：
 
-- `client_run_quotas` 只作为缓存，不作为最终额度事实。
+1. `slot_reconcile` 的成功只表示对账任务动作完成，不等于 slot 资源层一定正常。
+2. 如果发现目标 slot 数与 Client 实际 slot 数不一致，应直接收口为 `slot 异常`。
+3. `slot_reconcile` 的最终 slot 状态口径固定沿用 `waiting / loading / running / ending`。
+4. 这里的 `running` 只表示“已有 browser-env 配置包挂载并正在该 slot 上运行”的包运行态，不表示底层 slot 基础容器仅仅处于存活状态；Client 的 `occupied` 在中心统一归一化成 `running`。
+5. rebind 后 slot 不恢复旧关系，而应通过重新初始化后的 `slot_reconcile` 重建。
 
 ## 14. Node Server P0 的状态设计
 
@@ -990,7 +1111,7 @@ Platform Server 决定是否允许
 | `/api/v1/edge-clients` | Node Server | 中心节点列表 |
 | `/api/v1/edge-clients/{clientId}` | Node Server | 中心节点详情 |
 | `/api/v1/server-tasks/{taskId}` | Node Server | 中心任务事实查询 |
-| `/api/v1/edge-clients/{clientId}/quota` | Node Server | 平台额度快照查询 |
+| `/api/v1/edge-clients/{clientId}/run-quota` | Node Server | 平台额度快照查询 + 当前 run admission 判断 |
 
 ## 19.4 Platform Server 层接口归属
 
@@ -1125,6 +1246,7 @@ Platform/Operator        Node Server              Edge Client             Virtua
 
 1. `ending`、`stop`、`backup` 成功后，slot 必须回到空白 waiting 容器。
 2. Virtual Browser 的旧运行态不得遗留到下一次包加载。
+3. 这里的 slot 状态口径固定沿用 `waiting / loading / running / ending`，不得再扩成另一套运行资源命名。
 
 ## 22. P0 技术实现落地建议
 

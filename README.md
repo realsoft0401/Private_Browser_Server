@@ -23,10 +23,9 @@ Node 找到 Client
 
 当前刻意不把 old 的 Env、Task、RPA、Dashboard 一起机械搬回来，是为了避免新旧逻辑再次混杂；不是说这些能力不再属于 Server，而是要按新的中心服务边界重建。
 
-下一阶段正式结构与 old 迁移边界见：
+当前只保留四份核心文档：
 
-- [server-v1-structure-and-migration-boundary.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-structure-and-migration-boundary.md)
-- [server-v1-open-questions.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-open-questions.md)
+- [server-v1-central-node-technical-design.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-central-node-technical-design.md)
 - [server-v1-database-design.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-database-design.md)
-- [server-v1-sqlite-refactor-checklist.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-sqlite-refactor-checklist.md)
 - [server-v1-api-plan.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-api-plan.md)
+- [openapi.yaml](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/openapi.yaml)

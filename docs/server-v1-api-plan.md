@@ -100,6 +100,9 @@
 
 - `POST /api/v1/edge-clients/{clientId}/recheck`
 - `POST /api/v1/edge-clients/{clientId}/confirm-address-update`
+- `POST /api/v1/edge-clients/{clientId}/slot-reconcile`
+- `POST /api/v1/edge-clients/{clientId}/target-slot-count`
+- `GET /api/v1/edge-clients/{clientId}/slots`
 
 说明：
 
@@ -107,6 +110,10 @@
 - `recheck` 的中文业务语义名统一叫“会话校验”
 - `confirm-address-update` 用于管理员确认 IP 漂移后的地址更新
 - 顺序必须固定为：先 `recheck` 发现 `ip_mismatch`，再由管理员发起 `confirm-address-update`
+- `slot-reconcile` 用于中心重建 node-slot 关系缓存和节点 slot 摘要
+- `slot-reconcile` 正式按 task + SSE 设计
+- `target-slot-count` 是平台正式下发链路接入前的临时管理员治理入口，用于先把中心目标 slot 数落到 `edge_clients.target_slot_count`
+- `GET /slots` 返回中心缓存的当前 node-slot 明细和 slot 摘要，不直接穿透到 Client
 
 ## 5. Phase B：环境聚合查询 API
 
@@ -120,7 +127,8 @@
 说明：
 
 - 这两条先以 `server_browser_envs` 为主视图
-- 需要时再按需触发 Edge 实时刷新
+- 当前已按该口径落地
+- 需要时再显式触发 `refresh`
 
 ### 5.2 环境聚合刷新
 
@@ -130,6 +138,7 @@
 
 - 这条是中心主动同步某个 env 当前 Edge 事实
 - 它不是业务生命周期动作
+- 当前已按同步 HTTP 落地，不使用 SSE
 
 ## 6. Phase C：正式生命周期代理 API
 
@@ -146,6 +155,32 @@
 - `POST /api/v1/browser-envs`
 - `POST /api/v1/browser-envs/{envId}/run`
 - `POST /api/v1/browser-envs/{envId}/stop`
+
+说明：
+
+- 当前 `run` 已经先落最小正式骨架：
+  - 必须显式传 `slotId`
+  - 先走中心 run admission
+  - 再调用目标 Edge run
+  - 最终通过 `server_tasks + SSE` 收口
+- 当前 `stop` 也已经落地：
+  - 采用同步 HTTP 最终结果
+  - 内部仍创建 `server_tasks` 审计事实
+  - stop 成功后必须再次同步 Edge detail 回写中心 env 摘要
+- 当前 `backup / restore` 也已经落地最小正式骨架：
+  - 采用 `server_tasks + SSE`
+  - 通过 Edge 正式 task 接口执行
+  - Edge success 后必须再次同步中心 env 摘要
+- 当前 `package delete` 也已经落地：
+  - 采用 `server_tasks + SSE`
+  - 通过 Edge 正式 delete task 执行
+  - Edge success 后中心直接删除 `server_browser_envs` 缓存
+- 当前 `/del` 也已经落地：
+  - 采用同步 HTTP
+  - 通过 Edge 正式 `/del` 执行
+  - 成功后只回写最近同步时间和错误摘要，不删除中心 env 缓存
+- `run` 当前不自动选 slot
+- `create` 还未进入本轮实现
 
 ### 6.2 backup / restore / revalidate / import-package
 
@@ -170,17 +205,18 @@
 
 ### 7.1 任务查询
 
-- `GET /api/v1/tasks`
-- `GET /api/v1/tasks/{taskId}`
+- `GET /api/v1/server-tasks`
+- `GET /api/v1/server-tasks/{taskId}`
 
 ### 7.2 任务事件
 
-- `GET /api/v1/tasks/{taskId}/events`
+- `GET /api/v1/server-tasks/{taskId}/events`
 
 说明：
 
 - 这条是中心 SSE
 - 只有当 Server 侧真正需要多阶段过程可见时才做
+- 当前 `slot-reconcile` 已经明确需要走这条 SSE
 
 ## 8. Phase E：run admission / platform quota 相关 API
 
@@ -193,8 +229,10 @@
 说明：
 
 - 返回最近一次可信平台额度快照
+- 同时返回当前中心 run admission 判断
 - 这是管理员和排障接口
 - 不是平台真相源
+- 不使用 SSE
 
 ### 8.2 额度刷新
 
@@ -202,7 +240,9 @@
 
 说明：
 
-- 主动向平台刷新额度快照
+- 当前先允许管理员手工写入额度快照
+- 平台正式 quota API 接入后，再改成 Node 主动向平台刷新额度快照
+- 不使用 SSE
 
 ### 8.3 run admission 内部使用
 
@@ -247,6 +287,7 @@ V1 明确不进主线：
 - `POST /api/v1/edge-clients/{clientId}/unbind`
 - `POST /api/v1/edge-clients/{clientId}/recheck`
 - `POST /api/v1/edge-clients/{clientId}/confirm-address-update`
+- `POST /api/v1/edge-clients/{clientId}/slot-reconcile`
 - `GET /api/v1/browser-envs`
 - `GET /api/v1/browser-envs/{envId}`
 - `POST /api/v1/browser-envs`
@@ -258,8 +299,9 @@ V1 明确不进主线：
 - `POST /api/v1/browser-envs/import-package`
 - `DELETE /api/v1/browser-envs/{envId}/del`
 - `DELETE /api/v1/browser-envs/{envId}/package`
-- `GET /api/v1/tasks`
-- `GET /api/v1/tasks/{taskId}`
+- `GET /api/v1/server-tasks`
+- `GET /api/v1/server-tasks/{taskId}`
+- `GET /api/v1/server-tasks/{taskId}/events`
 
 ## 11. 推荐实现顺序
 
@@ -280,7 +322,7 @@ V1 明确不进主线：
 ### 第三步
 
 - 补 `server_tasks` 查询 API
-- 先做详情，再做列表
+- 先做详情，再做列表，再做事件流
 
 ### 第四步
 

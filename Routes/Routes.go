@@ -9,8 +9,10 @@ import (
 	NodeModel "private_browser_server/Models/Node"
 	"private_browser_server/Pkg/HttpResponse"
 	BindService "private_browser_server/Service/Bind"
+	BrowserEnvService "private_browser_server/Service/BrowserEnv"
 	HealthService "private_browser_server/Service/Health"
 	NodeService "private_browser_server/Service/Node"
+	TaskService "private_browser_server/Service/Task"
 	"private_browser_server/Settings"
 )
 
@@ -59,8 +61,26 @@ func Setup() *gin.Engine {
 	edgeClients.POST("/:clientId/recheck", NodeService.RecheckClient)
 	edgeClients.POST("/:clientId/confirm-address-update", NodeService.ConfirmAddressUpdate)
 	edgeClients.POST("/:clientId/push-client-id", BindService.PushClientID)
+	edgeClients.POST("/:clientId/slot-reconcile", NodeService.SlotReconcile)
+	edgeClients.POST("/:clientId/target-slot-count", NodeService.SetTargetSlotCount)
+	edgeClients.GET("/:clientId/run-quota", NodeService.GetRunQuota)
+	edgeClients.POST("/:clientId/run-quota/refresh", NodeService.RefreshRunQuota)
 	edgeClients.GET("", NodeService.ListBoundClients)
 	edgeClients.GET("/:clientId", NodeService.GetBoundClient)
+	edgeClients.GET("/:clientId/slots", NodeService.ListClientSlots)
+	serverTasks := apiV1.Group("/server-tasks")
+	serverTasks.GET("/:taskId", TaskService.GetDetail)
+	serverTasks.GET("/:taskId/events", TaskService.SubscribeEvents)
+	browserEnvs := apiV1.Group("/browser-envs")
+	browserEnvs.GET("", BrowserEnvService.List)
+	browserEnvs.GET("/:envId", BrowserEnvService.GetDetail)
+	browserEnvs.POST("/:envId/refresh", BrowserEnvService.Refresh)
+	browserEnvs.POST("/:envId/run", BrowserEnvService.Run)
+	browserEnvs.POST("/:envId/stop", BrowserEnvService.Stop)
+	browserEnvs.POST("/:envId/backup", BrowserEnvService.Backup)
+	browserEnvs.POST("/:envId/restore", BrowserEnvService.Restore)
+	browserEnvs.DELETE("/:envId/del", BrowserEnvService.DeleteImage)
+	browserEnvs.DELETE("/:envId/package", BrowserEnvService.DeletePackage)
 
 	_ = NodeModel.EdgeClient{}
 	return r

@@ -23,6 +23,13 @@ type EdgeClient struct {
 	DiscoveryStatus         string `json:"discoveryStatus"`
 	DiscoveryReason         string `json:"discoveryReason"`
 	PushStatus              string `json:"pushStatus"`
+	TargetSlotCount         int64  `json:"targetSlotCount"`
+	ActualSlotCount         int64  `json:"actualSlotCount"`
+	AvailableSlotCount      int64  `json:"availableSlotCount"`
+	RunningSlotCount        int64  `json:"runningSlotCount"`
+	SlotExceptionStatus     string `json:"slotExceptionStatus"`
+	SlotExceptionReason     string `json:"slotExceptionReason"`
+	LastSlotCheckedAt       int64  `json:"lastSlotCheckedAt"`
 	LastDiscoveredAt        int64  `json:"lastDiscoveredAt"`
 	LastHeartbeatAt         int64  `json:"lastHeartbeatAt"`
 	LastHeartbeatReportedAt int64  `json:"lastHeartbeatReportedAt"`

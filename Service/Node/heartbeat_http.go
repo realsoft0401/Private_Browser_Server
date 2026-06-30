@@ -2,6 +2,7 @@ package Node
 
 import (
 	"context"
+	"log"
 	"strings"
 	"time"
 
@@ -108,7 +109,17 @@ func refreshKnownNodeDeviceFacts(ctx context.Context, repo *NodeRepo.Repository,
 	}
 	deviceInfo, err := EdgeClientService.New().GetDeviceInfo(ctx, baseURL)
 	if err != nil {
+		log.Printf("refresh node device facts skipped, clientId=%s, baseUrl=%s, err=%v\n", node.ClientID, baseURL, err)
 		return nil
+	}
+	if deviceInfo.CPUCores <= 0 || deviceInfo.MemoryTotalMB <= 0 || strings.TrimSpace(deviceInfo.DockerVersion) == "" {
+		log.Printf("refresh node device facts got incomplete payload, clientId=%s, baseUrl=%s, cpuCores=%d, memoryTotalMb=%d, dockerVersion=%q\n",
+			node.ClientID,
+			baseURL,
+			deviceInfo.CPUCores,
+			deviceInfo.MemoryTotalMB,
+			strings.TrimSpace(deviceInfo.DockerVersion),
+		)
 	}
 	return repo.UpdateDeviceFacts(ctx, &NodeDAO.Row{
 		ClientID:      node.ClientID,

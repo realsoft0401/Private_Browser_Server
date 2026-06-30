@@ -2,6 +2,8 @@ package Quota
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	QuotaDAO "private_browser_server/Dao/Quota"
@@ -10,6 +12,8 @@ import (
 )
 
 type Repository struct{}
+
+var ErrNotFound = errors.New("client run quota not found")
 
 func NewRepository() *Repository {
 	return &Repository{}
@@ -46,6 +50,9 @@ func (r *Repository) GetByClientID(ctx context.Context, clientID string) (*Quota
 		&item.FetchedAt, &item.ExpiresAt, &item.Status, &item.LastError,
 	)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		return nil, fmt.Errorf("query client_run_quotas failed: %w", err)
 	}
 	return &item, nil
