@@ -21,6 +21,12 @@ type slotReconcileRequest struct {
 	Source string `json:"source"`
 }
 
+// SlotReconcile 创建一次节点 slot 对账任务。
+//
+// 设计来源：
+// - Node 当前必须知道某个 Client 真实有哪些 slot、每个 slot 当前是什么状态；
+// - 但这类对账是明显的多阶段动作，适合收口成中心 task + SSE；
+// - 因此这里同步只负责接单，真正的 Client 拉取与中心缓存重建都放到后台执行。
 func SlotReconcile(c *gin.Context) {
 	clientID := strings.TrimSpace(c.Param("clientId"))
 	if clientID == "" {
@@ -38,7 +44,7 @@ func SlotReconcile(c *gin.Context) {
 
 	node, err := NodeRepo.NewRepository().GetByClientID(requestCtx, clientID)
 	if err == NodeRepo.ErrNotFound {
-		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeRemoteError, "edge client not found")
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeNotFound, "edge client not found")
 		return
 	}
 	if err != nil {
@@ -74,6 +80,12 @@ func SlotReconcile(c *gin.Context) {
 	})
 }
 
+// runSlotReconcile 执行一次完整的 slot 对账。
+//
+// 职责边界：
+// - 只读取 Client 当前正式 slot 明细；
+// - 只重建中心 `edge_client_slots` 缓存和节点摘要；
+// - 不直接创建/删除 Client slot，不修改目标 slot 数，不自动发 run。
 func runSlotReconcile(taskID, clientID, baseURL string, targetSlotCount int64, source string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -158,6 +170,7 @@ func runSlotReconcile(taskID, clientID, baseURL string, targetSlotCount int64, s
 	_ = publisher.PublishCompleted(ctx, taskID, newSlotReconcileEvent(TaskModel.EventCompleted, taskID, clientID, "", "finalize_success", TaskModel.StatusSuccess, "slot reconcile completed", "", ""))
 }
 
+// newSlotReconcileEvent 统一构造 slot-reconcile 的 SSE 事件。
 func newSlotReconcileEvent(eventType, taskID, clientID, slotID, stage, status, message, errMsg, suggestion string) TaskModel.Event {
 	return TaskModel.Event{
 		Event:        eventType,
@@ -176,6 +189,16 @@ func newSlotReconcileEvent(eventType, taskID, clientID, slotID, stage, status, m
 	}
 }
 
+// normalizeClientSlotStatus 把 Client 侧 slot 状态收口到 Node 当前认可的 4 态。
+//
+// 当前正式口径已经收紧为：
+// - waiting
+// - loading
+// - running
+// - ending
+//
+// 这里保留对历史别名 `occupied/releasing` 的兼容映射，
+// 是为了避免旧状态残留把中心统计直接打坏。
 func normalizeClientSlotStatus(status string) string {
 	switch strings.TrimSpace(status) {
 	case "waiting":

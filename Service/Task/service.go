@@ -59,6 +59,13 @@ func GetService() *Service {
 	return defaultService
 }
 
+// CreateTask 创建一条新的中心任务主记录，并初始化进程内 SSE 缓存。
+//
+// 职责边界：
+// - 负责生成 `server-task-*` 主键；
+// - 负责写入 SQLite 主记录；
+// - 负责在当前进程里建立后续 SSE 事件缓冲；
+// - 不在这里偷发第一条 progress 事件，阶段事件必须由具体业务自己决定。
 func (s *Service) CreateTask(ctx context.Context, row *TaskDAO.Row) (string, error) {
 	if s == nil {
 		s = GetService()
@@ -100,14 +107,22 @@ func (s *Service) PublishProgress(ctx context.Context, taskID string, event Task
 	return s.publish(ctx, taskID, event, false, TaskModel.StatusRunning)
 }
 
+// PublishCompleted 把中心 task 收口为成功终态。
 func (s *Service) PublishCompleted(ctx context.Context, taskID string, event TaskModel.Event) error {
 	return s.publish(ctx, taskID, event, true, TaskModel.StatusSuccess)
 }
 
+// PublishFailed 把中心 task 收口为失败终态。
 func (s *Service) PublishFailed(ctx context.Context, taskID string, event TaskModel.Event) error {
 	return s.publish(ctx, taskID, event, true, TaskModel.StatusFailed)
 }
 
+// publish 是中心任务事件写入的统一收口点。
+//
+// 维护原则：
+// - 先更新内存事件流，再更新 SQLite 主状态；
+// - markDone=true 时必须关闭所有订阅者，避免 SSE 长连接悬挂；
+// - 这里不做自动重试，数据库写失败必须明确暴露给上层。
 func (s *Service) publish(ctx context.Context, taskID string, event TaskModel.Event, markDone bool, taskStatus string) error {
 	item, err := s.getRecord(taskID)
 	if err != nil {
@@ -149,6 +164,12 @@ func (s *Service) publish(ctx context.Context, taskID string, event TaskModel.Ev
 	return nil
 }
 
+// Subscribe 为某个中心 task 建立一次 SSE 订阅。
+//
+// 设计来源：
+// - 新订阅者需要先看到历史快照，再接实时事件；
+// - 已结束任务不需要保持通道，只返回静态快照即可；
+// - SQLite 不保存逐条事件，因此这里的实时事件只依赖当前进程内缓存。
 func (s *Service) Subscribe(taskID string) (Snapshot, <-chan TaskModel.Event, func(), error) {
 	item, err := s.getRecord(taskID)
 	if err != nil {
@@ -189,6 +210,12 @@ func (s *Service) Subscribe(taskID string) (Snapshot, <-chan TaskModel.Event, fu
 	return base, channel, cancel, nil
 }
 
+// GetDetail 读取中心任务主记录，并尽量补上最近一条内存事件摘要。
+//
+// 这样做的原因是：
+// - SQLite 主记录能保证进程重启后仍可查询；
+// - 内存里最近事件能补充 `currentStage/message` 这种更适合排障的信息；
+// - 两层合起来，detail 才既稳定又可读。
 func (s *Service) GetDetail(ctx context.Context, taskID string) (*TaskModel.DetailResponse, error) {
 	item, err := s.repo.GetByID(ctx, taskID)
 	if err != nil {
@@ -231,6 +258,7 @@ func (s *Service) GetDetail(ctx context.Context, taskID string) (*TaskModel.Deta
 	return result, nil
 }
 
+// getRecord 读取当前进程内的任务事件缓存。
 func (s *Service) getRecord(taskID string) (*record, error) {
 	if s == nil {
 		s = GetService()
@@ -244,6 +272,7 @@ func (s *Service) getRecord(taskID string) (*record, error) {
 	return item, nil
 }
 
+// formatUnix 统一把数据库秒级时间戳转成 RFC3339。
 func formatUnix(value int64) string {
 	if value <= 0 {
 		return ""
@@ -251,6 +280,10 @@ func formatUnix(value int64) string {
 	return time.Unix(value, 0).Format(time.RFC3339)
 }
 
+// mustParseRFC3339Unix 把事件时间转回数据库秒级时间戳。
+//
+// 这里使用“失败回落到当前时间”的策略，是为了避免单条事件格式异常时把整条任务更新完全打断；
+// 但这不是时间协议放松，正式事件仍应始终写 RFC3339。
 func mustParseRFC3339Unix(value string) int64 {
 	value = fmt.Sprintf("%s", value)
 	if value == "" {

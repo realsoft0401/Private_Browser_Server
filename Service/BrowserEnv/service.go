@@ -994,6 +994,12 @@ func (s *Service) loadReadyNode(ctx context.Context, clientID string) (*NodeMode
 	return admission.Node, nil
 }
 
+// syncEnvFromEdge 把目标 Edge 的当前 env 摘要回写到中心缓存。
+//
+// 维护原则：
+// - 中心只同步“够用的聚合字段”，不镜像 Edge 全量详情；
+// - 当前 `currentSlotId` 仍以中心编排链路传入的 slotId 为准，因为 Edge detail 还没有单独返回这个字段；
+// - `edgeTaskID` 先作为扩展位保留，当前中心主事实仍以 `server_task` 为准，不把 Edge taskId 写成新的事实源。
 func (s *Service) syncEnvFromEdge(ctx context.Context, env *BrowserEnvModel.ServerBrowserEnv, taskID, slotID, edgeTaskID, baseURL string) error {
 	detail, err := EdgeClientService.New().GetBrowserEnvDetail(ctx, baseURL, env.EnvID)
 	if err != nil {

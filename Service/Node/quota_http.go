@@ -110,6 +110,12 @@ func RefreshRunQuota(ctx *gin.Context) {
 	HttpResponse.ResponseSuccess(ctx, buildRunQuotaResponse(clientID, quota, evaluateRunAdmission(node, quota)))
 }
 
+// buildRunQuotaResponse 把额度快照和准入判断拼成统一响应。
+//
+// 职责边界：
+// - 不重新计算 admission，只消费已经算好的结果；
+// - quota 缺失时明确返回 `status=untrusted`，避免调用方误以为“空额度 = 允许 run”；
+// - 这样查询接口、刷新接口和后续诊断接口都能复用同一套响应口径。
 func buildRunQuotaResponse(clientID string, quota *QuotaModel.ClientRunQuota, admission QuotaModel.AdmissionResult) *QuotaModel.RunQuotaResponse {
 	response := &QuotaModel.RunQuotaResponse{
 		ClientID:  clientID,

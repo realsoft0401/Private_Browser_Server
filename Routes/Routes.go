@@ -16,15 +16,18 @@ import (
 	"private_browser_server/Settings"
 )
 
-// Setup 注册新的第一阶段路由。
+// Setup 注册当前 Node Server 对外暴露的正式路由。
 //
-// 当前只挂三类入口：
+// 当前这份路由表已经收口为 5 类正式入口：
 // - 基础入口：`/`、`/health`
 // - 文档入口：`/swagger`、`/openapi.yaml`
-// - 节点主线：heartbeat、discovered、bind、push、list、detail
+// - 节点治理：heartbeat、discovered、bind、recheck、confirm-address-update、slot、quota
+// - browser-env 生命周期：query、refresh、run、stop、backup、restore、package、del
+// - 中心任务观察：`/api/v1/server-tasks/*`
 //
-// 这里已经按当前定案去掉旧的 `/api/v1/server/*` 命名。
-// 原因是 Server 现在就是中心控制面本身，继续保留 `/server` 只会把正式 API 和历史过渡命名混在一起。
+// 这里继续坚持去掉旧的 `/api/v1/server/*` 命名。
+// 原因是 Server 现在就是中心控制面本身，继续保留 `/server` 只会把正式 API 和历史过渡命名混在一起，
+// 后续 OpenAPI、前端 SDK 和回归文档也会更容易漂移。
 func Setup() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()

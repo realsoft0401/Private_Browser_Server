@@ -346,7 +346,7 @@ paths:
                     message: push request body 非法
                 client_not_found:
                   value:
-                    code: 1005
+                    code: 1004
                     message: edge client not found
   /api/v1/edge-clients/{clientId}/unbind:
     post:
