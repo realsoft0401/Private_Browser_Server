@@ -235,6 +235,26 @@ func Restore(c *gin.Context) {
 	HttpResponse.ResponseSuccess(c, result)
 }
 
+// Revalidate 是中心 browser-env revalidate 接口的 HTTP 入口。
+//
+// 当前 revalidate 是 task + SSE：
+// - HTTP 立即返回中心 taskId/eventsUrl；
+// - 后台调用 Edge 正式 revalidate 并等待 Edge task 终态；
+// - 成功后刷新中心缓存，失败后写入 task 错误和 env last_error。
+func Revalidate(c *gin.Context) {
+	result, err := NewService().Revalidate(c.Request.Context(), c.Param("envId"))
+	if err != nil {
+		switch {
+		case errors.Is(err, BrowserEnvRepo.ErrNotFound):
+			HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeNotFound, "server browser env not found")
+		default:
+			HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeRemoteError, err.Error())
+		}
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
 // DeletePackage 是中心 browser-env package delete 接口的 HTTP 入口。
 //
 // 这条接口会真正销毁目标节点上的 env 资产，因此仍采用 task + SSE，

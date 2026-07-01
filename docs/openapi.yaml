@@ -1561,6 +1561,55 @@ paths:
                   value:
                     code: 1005
                     message: edge client is not healthy and verified
+  /api/v1/browser-envs/{envId}/revalidate:
+    post:
+      tags: [BrowserEnvs]
+      summary: Revalidate browser env from Node Server (SSE task)
+      description: |
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台把 revalidate 转发给目标 Edge，
+        再由中心继续收口最终成功或失败。
+
+        这条接口当前负责：
+        - 读取 `server_browser_envs` 聚合记录
+        - 校验目标节点当前 `healthy + verified`
+        - 创建 `server_tasks`
+        - 调用目标 Edge 正式 revalidate 接口
+        - 通过中心 SSE 收口 Edge revalidate 过程和终态
+        - Edge success 后重新同步中心 env 缓存
+
+        这条接口不是同步最终结果接口。调用方必须继续订阅
+        `/api/v1/server-tasks/{taskId}/events`，观察 `task.progress`、`task.completed`、
+        `task.failed` 事件，才能确认本次 revalidate 的最终结论。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Task accepted
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseTaskAccepted'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                accepted:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      taskId: server-task-1782800005001
+                      taskType: browser_env_revalidate
+                      resourceType: browser_env
+                      resourceId: '906090001_tk_324867594169356288'
+                      eventsUrl: /api/v1/server-tasks/server-task-1782800005001/events
+                env_not_found:
+                  value:
+                    code: 1004
+                    message: server browser env not found
+                remote_failed:
+                  value:
+                    code: 1005
+                    message: edge client is not healthy and verified
   /api/v1/browser-envs/{envId}/package:
     delete:
       tags: [BrowserEnvs]
@@ -1660,6 +1709,112 @@ paths:
                   value:
                     code: 1005
                     message: edge client is not healthy and verified
+  /api/v1/server-tasks:
+    get:
+      tags: [ServerTasks]
+      summary: List server tasks
+      description: |
+        查询 Node Server 持久化任务列表，用于管理员查看最近生命周期动作、失败任务和任务审计摘要。
+
+        这不是 SSE 接口，只读取 `server_tasks` 主记录；如果要观察某一个任务的多阶段过程，
+        应继续使用 `GET /api/v1/server-tasks/{taskId}/events`。
+
+        SSE 说明：
+        - 当前接口不使用 SSE，因为列表查询可以同步返回明确结果
+        - 返回的每条任务会包含 `eventsUrl`
+        - 如需查看单个任务过程，再订阅对应 `eventsUrl`
+      parameters:
+        - name: clientId
+          in: query
+          required: false
+          description: 按中心 Client 身份过滤任务
+          schema:
+            type: string
+          example: '9060901190003'
+        - name: envId
+          in: query
+          required: false
+          description: 按环境包 ID 过滤任务
+          schema:
+            type: string
+          example: '906090001_tk_324867594169356288'
+        - name: resourceId
+          in: query
+          required: false
+          description: 按任务资源 ID 过滤；browser-env 任务通常等于 envId，节点治理任务通常等于 clientId
+          schema:
+            type: string
+          example: '906090001_tk_324867594169356288'
+        - name: taskType
+          in: query
+          required: false
+          description: 按任务类型过滤
+          schema:
+            type: string
+          example: browser_env_run
+        - name: status
+          in: query
+          required: false
+          description: 按任务状态过滤
+          schema:
+            type: string
+            enum: [pending, running, success, failed]
+          example: failed
+        - name: page
+          in: query
+          required: false
+          description: 页码，默认 1
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 1
+        - name: pageSize
+          in: query
+          required: false
+          description: 每页数量，默认 20，最大 100
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
+      responses:
+        '200':
+          description: Server task list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseServerTaskList'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      items:
+                        - taskId: server-task-1782800001001
+                          taskType: browser_env_run
+                          resourceType: browser_env
+                          resourceId: '906090001_tk_324867594169356288'
+                          status: success
+                          currentStage: ''
+                          message: ''
+                          eventsUrl: /api/v1/server-tasks/server-task-1782800001001/events
+                          createdAt: '2026-06-30T10:00:00+08:00'
+                          updatedAt: '2026-06-30T10:00:20+08:00'
+                          finishedAt: '2026-06-30T10:00:20+08:00'
+                          error: ''
+                          suggestion: ''
+                      total: 1
+                      page: 1
+                      pageSize: 20
+                invalid_runtime:
+                  value:
+                    code: 1005
+                    message: query server_tasks list failed
   /api/v1/server-tasks/{taskId}:
     get:
       tags: [ServerTasks]
@@ -1992,6 +2147,13 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/ServerTaskDetail'
+    ApiResponseServerTaskList:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ServerTaskListResponse'
     ApiResponseBoundClientList:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
@@ -2686,6 +2848,25 @@ components:
         suggestion:
           type: string
           example: ''
+    ServerTaskListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServerTaskDetail'
+        total:
+          type: integer
+          description: 当前过滤条件下的任务总数
+          example: 1
+        page:
+          type: integer
+          description: 当前页码
+          example: 1
+        pageSize:
+          type: integer
+          description: 当前每页数量
+          example: 20
     SetTargetSlotCountResponse:
       type: object
       properties:

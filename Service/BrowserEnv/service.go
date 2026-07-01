@@ -547,6 +547,49 @@ func (s *Service) Restore(ctx context.Context, envID string) (*BrowserEnvModel.R
 	}, nil
 }
 
+// Revalidate 创建中心 browser-env revalidate 任务，并在后台编排 Edge 重新校验。
+//
+// 设计来源：
+// - Client 已经把 revalidate 收口为正式 SSE 任务，用于 error 环境包的受控重新校验；
+// - Node 不能绕过 Edge 直接改中心缓存状态，否则会出现“中心显示正常、边缘原子材料仍坏”的双事实；
+// - 因此这里只创建中心任务并派发 Edge revalidate，最终状态以 Edge detail + refresh 结果为准。
+func (s *Service) Revalidate(ctx context.Context, envID string) (*BrowserEnvModel.RevalidateTaskAcceptedResponse, error) {
+	envID = strings.TrimSpace(envID)
+	if envID == "" {
+		return nil, fmt.Errorf("envId 不能为空")
+	}
+
+	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	env, err := BrowserEnvRepo.NewRepository().GetByEnvID(requestCtx, envID)
+	if err != nil {
+		return nil, err
+	}
+
+	taskID, err := TaskService.GetService().CreateTask(requestCtx, &TaskDAO.Row{
+		MainAccountID: env.MainAccountID,
+		ClientID:      env.ClientID,
+		EnvID:         env.EnvID,
+		TaskType:      "browser_env_revalidate",
+		ResourceType:  "browser_env",
+		ResourceID:    env.EnvID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	go s.revalidateInBackground(taskID, env)
+
+	return &BrowserEnvModel.RevalidateTaskAcceptedResponse{
+		TaskID:       taskID,
+		TaskType:     "browser_env_revalidate",
+		ResourceType: "browser_env",
+		ResourceID:   env.EnvID,
+		EventsURL:    fmt.Sprintf("/api/v1/server-tasks/%s/events", taskID),
+	}, nil
+}
+
 // DeletePackage 创建中心 browser-env package delete 任务。
 //
 // 设计来源：
@@ -924,6 +967,36 @@ func (s *Service) restoreInBackground(taskID string, env *BrowserEnvModel.Server
 				ResourceID:   accepted.ResourceID,
 				EventsURL:    accepted.EventsURL,
 			}, nil
+		},
+	})
+}
+
+// revalidateInBackground 负责中心 revalidate 的后台编排。
+//
+// 维护原则：
+// - revalidate 只能通过 Edge 正式接口完成，Node 不直接修改环境包原子材料；
+// - 成功后仍要重新拉取 Edge detail 刷新中心缓存，避免中心和边缘状态漂移；
+// - 如果 Edge 判断“当前状态不需要 revalidate”，中心也按失败任务记录，交给管理员确认状态来源。
+func (s *Service) revalidateInBackground(taskID string, env *BrowserEnvModel.ServerBrowserEnv) {
+	s.runEdgeTaskLifecycle(taskID, env, edgeLifecycleTaskConfig{
+		TaskType:            "browser_env_revalidate",
+		StartStage:          "load_server_env",
+		StartMessage:        "task accepted",
+		DispatchStage:       "dispatch_edge_revalidate",
+		DispatchMessage:     "dispatching edge revalidate",
+		AcceptedStage:       "edge_task_accepted",
+		AcceptedMessage:     "edge task accepted: %s",
+		DispatchFailedStage: "dispatch_edge_revalidate_failed",
+		DispatchFailedMsg:   "dispatch edge revalidate failed",
+		DispatchSuggestion:  "check edge revalidate api and env status",
+		EdgeFailedStage:     "finalize_edge_failed",
+		EdgeFailedMsg:       "browser env revalidate failed",
+		SyncFailedStage:     "finalize_sync_failed",
+		SyncFailedMsg:       "edge revalidate succeeded but env sync failed",
+		SyncSuggestion:      "refresh browser env detail and check edge index state",
+		SuccessMessage:      "browser env revalidated",
+		Dispatch: func(ctx context.Context, nodeBaseURL string) (*EdgeClientService.TaskAcceptedResponse, error) {
+			return EdgeClientService.New().RevalidateBrowserEnv(ctx, nodeBaseURL, env.EnvID)
 		},
 	})
 }

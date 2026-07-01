@@ -15,8 +15,8 @@
 | 节点治理 | `POST /api/v1/edge-clients/{clientId}/slot-reconcile` | 已实现并已回归 |
 | 节点治理 | `GET /api/v1/edge-clients/{clientId}/run-quota` | 已实现并已回归 |
 | 节点治理 | `POST /api/v1/edge-clients/{clientId}/run-quota/refresh` | 已实现并已回归 |
-| Browser Env 来源 | `POST /api/v1/browser-envs` | 已实现，待真实回归 |
-| Browser Env 来源 | `POST /api/v1/browser-envs/import-package` | 已实现，待真实回归 |
+| Browser Env 来源 | `POST /api/v1/browser-envs` | 已实现并已回归 |
+| Browser Env 来源 | `POST /api/v1/browser-envs/import-package` | 已实现并已回归 |
 | Browser Env 查询 | `GET /api/v1/browser-envs` | 已实现并已回归 |
 | Browser Env 查询 | `GET /api/v1/browser-envs/{envId}` | 已实现并已回归 |
 | Browser Env 查询 | `POST /api/v1/browser-envs/{envId}/refresh` | 已实现并已回归 |
@@ -24,16 +24,20 @@
 | Browser Env 生命周期 | `POST /api/v1/browser-envs/{envId}/stop` | 已实现并已回归 |
 | Browser Env 生命周期 | `POST /api/v1/browser-envs/{envId}/backup` | 已实现并已回归 |
 | Browser Env 生命周期 | `POST /api/v1/browser-envs/{envId}/restore` | 已实现并已回归 |
+| Browser Env 生命周期 | `POST /api/v1/browser-envs/{envId}/revalidate` | 已实现并已回归 |
 | Browser Env 生命周期 | `PATCH /api/v1/browser-envs/{envId}/runtime-image` | 已实现并已回归 |
 | Browser Env 生命周期 | `DELETE /api/v1/browser-envs/{envId}/package` | 已实现并已回归 |
 | Browser Env 生命周期 | `DELETE /api/v1/browser-envs/{envId}/del` | 已实现并已回归 |
-| 中心 Task | `GET /api/v1/server-tasks/{taskId}` | 已实现并已用于现有任务链 |
+| 中心 Task | `GET /api/v1/server-tasks` | 已实现并已回归 |
+| 中心 Task | `GET /api/v1/server-tasks/{taskId}` | 已实现并已回归 |
 | 中心 Task | `GET /api/v1/server-tasks/{taskId}/events` | 已实现并已回归 |
 
 状态口径固定为：
 
 - `已实现并已回归`
-  - 代码已落地，且至少完成过一轮真实接口回归
+  - 代码已落地，且已经按对应回归文档完整走过一轮真实接口测试
+- `已实现，待完整回归`
+  - 代码已落地，可能已做编译、OpenAPI、错误路径或局部 curl 验证，但还没有按回归文档完整走完正向闭环
 
 ## 2. 节点治理
 
@@ -74,6 +78,8 @@
   - `POST /api/v1/browser-envs/{envId}/backup`
 - [server-browser-env-restore.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-browser-env-restore.md)
   - `POST /api/v1/browser-envs/{envId}/restore`
+- [server-browser-env-revalidate.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-browser-env-revalidate.md)
+  - `POST /api/v1/browser-envs/{envId}/revalidate`
 - [server-browser-env-runtime-image.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-browser-env-runtime-image.md)
   - `PATCH /api/v1/browser-envs/{envId}/runtime-image`
 - [server-browser-env-delete-package.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-browser-env-delete-package.md)
@@ -92,13 +98,19 @@
   - 中心 package delete 回归
 - [server-browser-env-delete-image-regression.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-browser-env-delete-image-regression.md)
   - 中心 del 回归
+- [server-browser-env-revalidate-regression.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-browser-env-revalidate-regression.md)
+  - 中心 revalidate 回归
 
 ## 5. 中心 Task
 
+- [server-task-list.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-task-list.md)
+  - `GET /api/v1/server-tasks`
 - [server-task-detail.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-task-detail.md)
   - `GET /api/v1/server-tasks/{taskId}`
 - [server-task-events.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-task-events.md)
   - `GET /api/v1/server-tasks/{taskId}/events`
+- [server-task-list-regression.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-task-list-regression.md)
+  - 中心任务列表回归
 
 ## 6. 上层总文档
 

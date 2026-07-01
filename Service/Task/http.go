@@ -5,13 +5,41 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	TaskModel "private_browser_server/Models/Task"
 	"private_browser_server/Pkg/HttpResponse"
 	TaskRepo "private_browser_server/Repository/Task"
 )
+
+// List 返回中心 task 历史列表。
+//
+// 职责边界：
+// - 普通 HTTP 查询，不是 SSE；
+// - 只读 `server_tasks` 持久化摘要，不读取 SSE 事件明细；
+// - 支持按 client/env/resource/task/status 过滤，方便管理员定位失败动作。
+func List(c *gin.Context) {
+	requestCtx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	result, err := GetService().List(requestCtx, TaskModel.ListQuery{
+		ClientID:   c.Query("clientId"),
+		EnvID:      c.Query("envId"),
+		ResourceID: c.Query("resourceId"),
+		TaskType:   c.Query("taskType"),
+		Status:     c.Query("status"),
+		Page:       parsePositiveInt(c.Query("page")),
+		PageSize:   parsePositiveInt(c.Query("pageSize")),
+	})
+	if err != nil {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInternalError, err.Error())
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
 
 // GetDetail 返回中心 task 的当前持久化摘要。
 //
@@ -90,6 +118,18 @@ func SubscribeEvents(c *gin.Context) {
 			}
 		}
 	}
+}
+
+// parsePositiveInt 解析查询参数里的正整数。
+//
+// 非法输入统一按 0 处理，由 Service 层套默认值；这样列表接口不会因为 page 为空或误填字符串
+// 直接返回 500，也不会把参数清洗逻辑散在多个 handler 里。
+func parsePositiveInt(value string) int {
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0
+	}
+	return parsed
 }
 
 // writeSSEEvent 统一把事件编码成正式 SSE 报文。

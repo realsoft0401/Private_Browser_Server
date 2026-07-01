@@ -72,6 +72,7 @@ func Setup() *gin.Engine {
 	edgeClients.GET("/:clientId", NodeService.GetBoundClient)
 	edgeClients.GET("/:clientId/slots", NodeService.ListClientSlots)
 	serverTasks := apiV1.Group("/server-tasks")
+	serverTasks.GET("", TaskService.List)
 	serverTasks.GET("/:taskId", TaskService.GetDetail)
 	serverTasks.GET("/:taskId/events", TaskService.SubscribeEvents)
 	browserEnvs := apiV1.Group("/browser-envs")
@@ -85,6 +86,7 @@ func Setup() *gin.Engine {
 	browserEnvs.PATCH("/:envId/runtime-image", BrowserEnvService.UpdateRuntimeImage)
 	browserEnvs.POST("/:envId/backup", BrowserEnvService.Backup)
 	browserEnvs.POST("/:envId/restore", BrowserEnvService.Restore)
+	browserEnvs.POST("/:envId/revalidate", BrowserEnvService.Revalidate)
 	browserEnvs.DELETE("/:envId/del", BrowserEnvService.DeleteImage)
 	browserEnvs.DELETE("/:envId/package", BrowserEnvService.DeletePackage)
 

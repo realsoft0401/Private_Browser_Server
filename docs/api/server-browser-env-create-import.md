@@ -5,7 +5,7 @@
 - `POST /api/v1/browser-envs`
 - `POST /api/v1/browser-envs/import-package`
 
-当前状态：已实现，待真实回归。
+当前状态：已实现并已回归。
 
 ---
 

@@ -268,6 +268,33 @@ func (s *Service) GetDetail(ctx context.Context, taskID string) (*TaskModel.Deta
 	return result, nil
 }
 
+// List 查询中心任务历史列表。
+//
+// 设计来源：
+// - detail/events 只能围绕一个 taskId 排障，缺少“我最近做过哪些动作”的管理视图；
+// - 列表接口只读 SQLite 长期事实，不访问 Edge、不依赖当前进程内 SSE 缓存；
+// - 当前阶段先返回任务主摘要，过程事件仍然通过 detail/events 分别查看。
+func (s *Service) List(ctx context.Context, query TaskModel.ListQuery) (*TaskModel.ListResponse, error) {
+	if s == nil {
+		s = GetService()
+	}
+	query = normalizeListQuery(query)
+	rows, total, err := s.repo.List(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]TaskModel.DetailResponse, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, taskDetailFromRow(row))
+	}
+	return &TaskModel.ListResponse{
+		Items:    items,
+		Total:    total,
+		Page:     query.Page,
+		PageSize: query.PageSize,
+	}, nil
+}
+
 // getRecord 读取当前进程内的任务事件缓存。
 func (s *Service) getRecord(taskID string) (*record, error) {
 	if s == nil {
@@ -280,6 +307,40 @@ func (s *Service) getRecord(taskID string) (*record, error) {
 		return nil, TaskRepo.ErrNotFound
 	}
 	return item, nil
+}
+
+// normalizeListQuery 统一任务列表分页默认值。
+//
+// 维护原则：pageSize 最大 100 是管理接口保护线，不要为了 Swagger 方便改成无限制列表；
+// 如果未来需要导出审计日志，应新增导出接口，而不是放宽这个普通查询入口。
+func normalizeListQuery(query TaskModel.ListQuery) TaskModel.ListQuery {
+	if query.Page <= 0 {
+		query.Page = 1
+	}
+	if query.PageSize <= 0 {
+		query.PageSize = 20
+	}
+	if query.PageSize > 100 {
+		query.PageSize = 100
+	}
+	return query
+}
+
+// taskDetailFromRow 把数据库任务主记录转换成 API 摘要。
+func taskDetailFromRow(item TaskModel.ServerTask) TaskModel.DetailResponse {
+	return TaskModel.DetailResponse{
+		TaskID:       item.ID,
+		TaskType:     item.TaskType,
+		ResourceType: item.ResourceType,
+		ResourceID:   item.ResourceID,
+		Status:       item.Status,
+		EventsURL:    item.EventsURL,
+		CreatedAt:    formatUnix(item.CreatedAt),
+		UpdatedAt:    formatUnix(item.UpdatedAt),
+		FinishedAt:   formatUnix(item.FinishedAt),
+		Error:        item.ErrorMessage,
+		Suggestion:   item.Suggestion,
+	}
 }
 
 // formatUnix 统一把数据库秒级时间戳转成 RFC3339。

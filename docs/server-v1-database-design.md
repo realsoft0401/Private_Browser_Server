@@ -1067,7 +1067,7 @@ CREATE TABLE server_tasks (
   operator_username TEXT NOT NULL DEFAULT '',
   client_id TEXT NOT NULL DEFAULT '',
   env_id TEXT NOT NULL DEFAULT '',
-  type TEXT NOT NULL DEFAULT '',
+  task_type TEXT NOT NULL DEFAULT '',
   resource_type TEXT NOT NULL DEFAULT '',
   resource_id TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'pending',

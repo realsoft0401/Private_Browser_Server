@@ -206,12 +206,12 @@
 
 ### 7.1 任务查询
 
-- `GET /api/v1/server-tasks`
-- `GET /api/v1/server-tasks/{taskId}`
+- `GET /api/v1/server-tasks`：已实现并已回归
+- `GET /api/v1/server-tasks/{taskId}`：已实现并已回归
 
 ### 7.2 任务事件
 
-- `GET /api/v1/server-tasks/{taskId}/events`
+- `GET /api/v1/server-tasks/{taskId}/events`：已实现并已回归
 
 说明：
 
@@ -297,7 +297,7 @@ V1 明确不进主线：
 - `POST /api/v1/browser-envs/{envId}/backup`
 - `POST /api/v1/browser-envs/{envId}/restore`
 - `PATCH /api/v1/browser-envs/{envId}/runtime-image`
-- `POST /api/v1/browser-envs/{envId}/revalidate`
+- `POST /api/v1/browser-envs/{envId}/revalidate`：已实现并已回归
 - `POST /api/v1/browser-envs/import-package`
 - `DELETE /api/v1/browser-envs/{envId}/del`
 - `DELETE /api/v1/browser-envs/{envId}/package`
@@ -324,7 +324,7 @@ V1 明确不进主线：
 ### 第三步
 
 - 补 `server_tasks` 查询 API
-- 先做详情，再做列表，再做事件流
+- 详情、列表、事件流均已落地并已回归
 
 ### 第四步
 

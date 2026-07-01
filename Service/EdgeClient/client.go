@@ -356,6 +356,14 @@ func (c *Client) RestoreBrowserEnv(ctx context.Context, baseURL, envID string) (
 	return &response, nil
 }
 
+func (c *Client) RevalidateBrowserEnv(ctx context.Context, baseURL, envID string) (*TaskAcceptedResponse, error) {
+	var response TaskAcceptedResponse
+	if err := c.doJSON(ctx, http.MethodPost, strings.TrimRight(strings.TrimSpace(baseURL), "/")+"/api/v1/edge/browser-envs/"+strings.TrimSpace(envID)+"/revalidate", "", nil, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
 func (c *Client) DeleteBrowserEnvPackage(ctx context.Context, baseURL, envID string) (*BrowserEnvDeletePackageResponse, error) {
 	var response BrowserEnvDeletePackageResponse
 	if err := c.doJSON(ctx, http.MethodDelete, strings.TrimRight(strings.TrimSpace(baseURL), "/")+"/api/v1/edge/browser-envs/"+strings.TrimSpace(envID)+"/package", "", nil, &response); err != nil {
