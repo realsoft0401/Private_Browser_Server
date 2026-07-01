@@ -27,7 +27,7 @@ info:
     - `1500` 服务内部错误
 servers:
   - url: /
-    description: 当前打开 Swagger 页面的 Server 服务入口
+    description: 当前打开 Swagger 或 Scalar 页面的 Server 服务入口
 tags:
   - name: Health
     description: 服务健康检查
@@ -220,12 +220,15 @@ paths:
         执行顺序：
         1. 根据 `clientIp` 探测 3300 Client `/health`
         2. 探测 `/api/v1/edge/device-info`
-        3. 生成中心 `clientId`
-        4. 写入正式绑定节点表
-        5. 自动调用 3300 Client assign 接口下发 `clientId`
+        3. 探测 `/api/v1/edge/node-registration`，确认本地没有 `node-registration.json` 绑定锁
+        4. 生成中心 `clientId`
+        5. 写入正式绑定节点表
+        6. 自动调用 3300 Client assign 接口下发 `clientId`
 
         关键规则：
         - 同一 Client 已被其它账号绑定时，必须拒绝重复绑定
+        - Client 本地已有 `node-registration.json` 时，普通 bind 必须拒绝
+        - 换 Node 必须先旧 Node unbind；旧 Node 不可用时后续走管理员接管流程
         - bind 成功但 push 失败时，不回滚 bind，只返回 `pushStatus=failed`
 
         补充说明：
@@ -293,6 +296,10 @@ paths:
                   value:
                     code: 1005
                     message: 该 Client 已被其它账号绑定，请先解绑后再重新绑定
+                registration_locked:
+                  value:
+                    code: 1005
+                    message: 该 Client 已存在 node-registration.json，普通 bind 被拒绝；请先从旧 Node unbind 清理本地注册，或后续走管理员接管流程；currentNode=http://192.168.111.220:3400 clientId=9060901190003 accountId=906090119
   /api/v1/edge-clients/{clientId}/push-client-id:
     post:
       tags: [Binding]

@@ -39,6 +39,37 @@ type DeviceInfoResponse struct {
 	DiscoveryMode string `json:"discoveryMode"`
 }
 
+// NodeRegistrationStatusResponse 是 Node bind 前读取 Client 本地注册锁时使用的最小模型。
+//
+// 设计来源：
+// - 多个 Node Server 各自使用本地 SQLite 时，单靠当前 Node 的 `edge_clients` 表无法阻止另一个 Node 重复 bind；
+// - 因此 Client 本地 `node-registration.json` 被收口成“本机已被某个 Node 接管”的本地锁；
+// - 普通 bind 只关心这个锁是否存在，不把 cachedRegistration 反向当成中心事实源。
+type NodeRegistrationStatusResponse struct {
+	CacheStatus        string                 `json:"cacheStatus"`
+	CacheMessage       string                 `json:"cacheMessage"`
+	CachedRegistration *NodeRegistrationState `json:"cachedRegistration"`
+}
+
+// NodeRegistrationState 是 Client 本地 node-registration.json 的只读摘要。
+//
+// 职责边界：
+// - 这里仅用于错误提示和管理员排障；
+// - 不允许用它覆盖当前 Node 的中心数据库；
+// - 不允许因为里面的 clientId/accountId 看起来相同就放行普通 bind。
+type NodeRegistrationState struct {
+	ClientID          string `json:"clientId"`
+	MainAccountID     string `json:"mainAccountId"`
+	NodeServerBaseURL string `json:"nodeServerBaseUrl"`
+	NodeName          string `json:"nodeName"`
+	BaseURL           string `json:"baseUrl"`
+	ClientIP          string `json:"clientIp"`
+	DockerAPIURL      string `json:"dockerApiUrl"`
+	Source            string `json:"source"`
+	RegisteredAt      int64  `json:"registeredAt"`
+	UpdatedAt         int64  `json:"updatedAt"`
+}
+
 // SlotResponse 是 Node Server 从 Client 读取 slot 当前态时使用的最小模型。
 //
 // 设计边界：
@@ -267,6 +298,20 @@ func (c *Client) GetHealth(ctx context.Context, baseURL string) (*HealthResponse
 func (c *Client) GetDeviceInfo(ctx context.Context, baseURL string) (*DeviceInfoResponse, error) {
 	var response DeviceInfoResponse
 	if err := c.doJSON(ctx, http.MethodGet, strings.TrimRight(strings.TrimSpace(baseURL), "/")+"/api/v1/edge/device-info", "", nil, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// GetNodeRegistration 读取 Client 本地 node-registration 状态。
+//
+// 设计来源：
+// - 普通 bind 前必须检查 Client 本地是否已有 `node-registration.json`；
+// - 只要存在本地注册锁，就说明这台 Client 已被某个 Node 接管过，新的普通 bind 必须拒绝；
+// - 这里是只读探测，不带 API key，不修改 Client 状态。
+func (c *Client) GetNodeRegistration(ctx context.Context, baseURL string) (*NodeRegistrationStatusResponse, error) {
+	var response NodeRegistrationStatusResponse
+	if err := c.doJSON(ctx, http.MethodGet, strings.TrimRight(strings.TrimSpace(baseURL), "/")+"/api/v1/edge/node-registration", "", nil, &response); err != nil {
 		return nil, err
 	}
 	return &response, nil

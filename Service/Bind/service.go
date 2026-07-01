@@ -35,6 +35,7 @@ func NewService() *Service {
 //
 // 当前仍然保留第一阶段 bind 输入，但内部序号策略已经收紧：
 // - discovery 不落正式表，但 bind 前会真实探测 Client；
+// - 普通 bind 前必须检查 Client 本地 node-registration 锁，只要已有 JSON 留痕就拒绝；
 // - clientId 仍然是 `mainAccountId + 4位序号`；
 // - unbind 删除当前有效绑定结果后，下一次 bind 必须重新生成新的 clientId；
 // - 设备序号不再按列表数量猜，而是走 repository 里的 `MAX(client_sequence)+1`。
@@ -68,6 +69,19 @@ func (s *Service) BindByAccountAndClientIP(ctx context.Context, request BindMode
 		return nil, err
 	}
 	DiscoveryService.Upsert(*discovered)
+	if err = ensureClientRegistrationUnlocked(ctx, discovered.BaseURL); err != nil {
+		now := time.Now().Unix()
+		_ = BindRepo.NewRepository().CreateLog(ctx, &BindDAO.LogRow{
+			ClientID:      "",
+			MainAccountID: accountID,
+			ClientIP:      clientIP,
+			Action:        "bind",
+			Result:        "failed",
+			Message:       err.Error(),
+			CreatedAt:     now,
+		})
+		return nil, err
+	}
 
 	now := time.Now().Unix()
 	apiKeyHash := hashAPIKey(strings.TrimSpace(Settings.Conf.EdgeConfig.APIKey))
@@ -174,6 +188,38 @@ func (s *Service) BindByAccountAndClientIP(ctx context.Context, request BindMode
 	response.PushStatus = "success"
 	_ = NodeRepo.NewRepository().UpdatePushStatus(ctx, clientID, "success", time.Now().Unix())
 	return response, nil
+}
+
+// ensureClientRegistrationUnlocked 把 Client 本地 node-registration.json 收口成普通 bind 的本地互斥锁。
+//
+// 设计来源：
+// - 多个 Node Server 不共享 SQLite 时，每个 Node 都只能看到自己的 `edge_clients`；
+// - 如果普通 bind 只查当前 Node 数据库，就会允许另一台 Node 抢同一台 Client；
+// - 用户已经明确收口：只要 Client 本地存在 `node-registration.json`，普通 bind 一律拒绝。
+//
+// 职责边界：
+// - 这里只做普通 bind 的前置拒绝；
+// - 不删除、不覆盖 Client 本地注册文件；
+// - 不根据 cachedRegistration 里的 clientId/accountId 做“看起来相同就放行”的兼容；
+// - 后续如果要支持旧 Node 不可用时的管理员接管，必须做单独 force 流程和审计，不能塞进这里。
+func ensureClientRegistrationUnlocked(ctx context.Context, baseURL string) error {
+	status, err := EdgeClientService.New().GetNodeRegistration(ctx, baseURL)
+	if err != nil {
+		return fmt.Errorf("检查 Client 本地 node-registration 失败，无法确认绑定锁状态: %w", err)
+	}
+	if status == nil {
+		return nil
+	}
+	if strings.TrimSpace(status.CacheStatus) != "cached" || status.CachedRegistration == nil {
+		return nil
+	}
+	registration := status.CachedRegistration
+	return fmt.Errorf(
+		"该 Client 已存在 node-registration.json，普通 bind 被拒绝；请先从旧 Node unbind 清理本地注册，或后续走管理员接管流程；currentNode=%s clientId=%s accountId=%s",
+		strings.TrimSpace(registration.NodeServerBaseURL),
+		strings.TrimSpace(registration.ClientID),
+		strings.TrimSpace(registration.MainAccountID),
+	)
 }
 
 // UnbindClient 删除当前有效绑定结果，并尝试清理 Client 本地 node-registration.json 留痕。

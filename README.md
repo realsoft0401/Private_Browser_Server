@@ -29,3 +29,40 @@ Node 找到 Client
 - [server-v1-database-design.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-database-design.md)
 - [server-v1-api-plan.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-api-plan.md)
 - [openapi.yaml](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/openapi.yaml)
+
+## API 文档入口
+
+Node Server 当前内置两类 API 文档页面，全部挂在 3400 主服务内：
+
+- `/swagger`
+- `/scalar`
+- `/openapi.yaml`
+
+访问示例：
+
+```text
+http://127.0.0.1:3400/swagger
+http://127.0.0.1:3400/scalar
+http://127.0.0.1:3400/openapi.yaml
+```
+
+其中 `/scalar` 是唯一 Scalar 正式入口，不维护独立 Scalar 展示服务，也不新增单独 Dockerfile。
+
+
+
+cd /Users/lining/Documents/Browser_virtualization/Private_Browser_Server
+DEBIAN_MIRROR=deb.debian.org \
+./scripts/build-server-image.sh \
+  --platform linux/arm64 \
+  --image crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_node_server \
+  --tag 0.1.1-arm64 \
+  --push
+
+
+
+  docker run -d \
+  --name private-browser-node-server \
+  --restart always \
+  --network host \
+  -v /Business/server-data:/app/data \
+crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_node_server:0.1.1-arm64

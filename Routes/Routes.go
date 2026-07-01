@@ -20,7 +20,7 @@ import (
 //
 // 当前这份路由表已经收口为 5 类正式入口：
 // - 基础入口：`/`、`/health`
-// - 文档入口：`/swagger`、`/openapi.yaml`
+// - 文档入口：`/swagger`、`/scalar`、`/openapi.yaml`
 // - 节点治理：heartbeat、discovered、bind、recheck、confirm-address-update、slot、quota
 // - browser-env 生命周期：query、refresh、run、stop、backup、restore、package、del
 // - 中心任务观察：`/api/v1/server-tasks/*`
@@ -54,6 +54,8 @@ func Setup() *gin.Engine {
 	r.GET("/swagger/", func(c *gin.Context) {
 		c.File(filepath.Join(Settings.Conf.ProjectRoot, "public", "swagger.html"))
 	})
+	r.GET("/scalar", scalarPage)
+	r.GET("/scalar/", scalarPage)
 
 	apiV1 := r.Group("/api/v1")
 	edgeClients := apiV1.Group("/edge-clients")
@@ -92,4 +94,18 @@ func Setup() *gin.Engine {
 
 	_ = NodeModel.EdgeClient{}
 	return r
+}
+
+// scalarPage 返回 Node Server 内置 Scalar API Reference 页面。
+//
+// 设计来源：
+// - Client 已经把 Scalar 收口为主服务内置页面，不再维护单独文档容器；
+// - Node Server 也采用同一口径，避免出现 `/swagger` 在 3400、Scalar 又跑到其它端口的混乱；
+// - OpenAPI 仍然只有 `docs/openapi.yaml` 一份事实源，Scalar 只负责展示。
+//
+// 职责边界：
+// - 这里只返回静态页面；
+// - 不复制第二份 OpenAPI，不引入独立 Dockerfile，不改变任何业务 API 状态机。
+func scalarPage(c *gin.Context) {
+	c.File(filepath.Join(Settings.Conf.ProjectRoot, "public", "scalar.html"))
 }

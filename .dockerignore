@@ -1,0 +1,7 @@
+.git
+.gocache
+.DS_Store
+data
+tmp
+server.log
+*.log

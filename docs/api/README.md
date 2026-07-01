@@ -4,12 +4,19 @@
 
 - 把当前 `Private_Browser_Server` 已经落地或已经收口的 API 文档按主题挂起来
 
-当前目录下的文档分 5 组：
+当前目录下的文档按主题分组：
 
 ## 1. 状态总览
 
 | 分组 | 接口 / 文档 | 当前状态 |
 | --- | --- | --- |
+| 节点接入 | `GET /api/v1/edge-clients/discovered` | 已实现并已回归 |
+| 节点接入 | `POST /api/v1/edge-clients/heartbeat` | 已实现并已回归 |
+| 节点接入 | `POST /api/v1/edge-clients/bind` | 已实现并已回归 |
+| 节点接入 | `POST /api/v1/edge-clients/{clientId}/push-client-id` | 已实现并已回归 |
+| 节点接入 | `POST /api/v1/edge-clients/{clientId}/unbind` | 已实现并已回归 |
+| 节点接入 | `POST /api/v1/edge-clients/{clientId}/recheck` | 已实现并已回归 |
+| 节点接入 | `POST /api/v1/edge-clients/{clientId}/confirm-address-update` | 已实现并已回归 |
 | 节点治理 | `GET /api/v1/edge-clients/{clientId}/slots` | 已实现并已回归 |
 | 节点治理 | `POST /api/v1/edge-clients/{clientId}/target-slot-count` | 已实现并已回归 |
 | 节点治理 | `POST /api/v1/edge-clients/{clientId}/slot-reconcile` | 已实现并已回归 |
@@ -39,7 +46,16 @@
 - `已实现，待完整回归`
   - 代码已落地，可能已做编译、OpenAPI、错误路径或局部 curl 验证，但还没有按回归文档完整走完正向闭环
 
-## 2. 节点治理
+## 2. 节点接入与治理
+
+- [server-edge-client-access-governance.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-edge-client-access-governance.md)
+  - `GET /api/v1/edge-clients/discovered`
+  - `POST /api/v1/edge-clients/heartbeat`
+  - `POST /api/v1/edge-clients/bind`
+  - `POST /api/v1/edge-clients/{clientId}/push-client-id`
+  - `POST /api/v1/edge-clients/{clientId}/unbind`
+  - `POST /api/v1/edge-clients/{clientId}/recheck`
+  - `POST /api/v1/edge-clients/{clientId}/confirm-address-update`
 
 - [server-slot-governance-apis.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-slot-governance-apis.md)
   - `GET /api/v1/edge-clients/{clientId}/slots`
@@ -118,6 +134,8 @@
 
 - [openapi.yaml](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/openapi.yaml)
   - Swagger / OpenAPI 正式协议入口
+- [scalar.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/scalar.md)
+  - Node Server 内置 Scalar API Reference 页面说明
 - [server-v1-api-plan.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-api-plan.md)
   - V1 API 分阶段实现路线
 - [server-v1-central-node-technical-design.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-central-node-technical-design.md)

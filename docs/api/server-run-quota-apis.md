@@ -5,6 +5,10 @@
 - `GET /api/v1/edge-clients/{clientId}/run-quota`
 - `POST /api/v1/edge-clients/{clientId}/run-quota/refresh`
 
+> 当前口径：
+> 这两条接口已经作为节点治理能力落地并完成回归，但“平台额度正式下发、slot 数量商业约束最终收口、browser-env run admission 最终商业准入”当前暂停。
+> 后续不继续扩展平台约束代码，除非重新确认该阶段需求。
+
 ---
 
 ## 1. GET /api/v1/edge-clients/{clientId}/run-quota
@@ -72,6 +76,7 @@
 - 这是平台正式 quota API 接入前的临时治理入口
 - 后续平台接口就绪后，应改成 Node 拉平台，再落本地快照
 - 当前人工写入只是为了先把 run admission 主链打通
+- 当前平台约束最终收口已经暂停，本接口不代表下一阶段继续推进平台额度能力
 
 ### SSE 说明
 

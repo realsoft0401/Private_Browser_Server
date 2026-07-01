@@ -27,13 +27,15 @@
 1. 先稳定节点治理主线 API
 2. 再补环境聚合查询 API
 3. 再补正式生命周期代理 API
-4. 最后把 task 与 run admission 补完整
+4. 再补中心 task 查询与 SSE 观察
+5. 平台额度、slot 数量和 run admission 最终收口先暂停，不作为当前下一阶段任务
 
 原因很简单：
 
 - 节点还没收口，env 调度就没有稳定目标
 - `server_browser_envs` 还没立住，生命周期接口就没有中心事实源
-- `server_tasks` 和额度快照没立住，run 准入就会变成一次性拼逻辑
+- `server_tasks` 没立住，长链路生命周期动作就没有中心审计事实
+- 平台额度属于商业约束，必须等需求再次确认后单独进入，不和当前非平台任务混做
 
 ## 3. 正式命名空间
 
@@ -41,17 +43,17 @@
 
 - `/api/v1/edge-clients/*`
 - `/api/v1/browser-envs/*`
-- `/api/v1/tasks/*`
+- `/api/v1/server-tasks/*`
 
 不再新增：
 
 - `/api/v1/server/*`
 
-因此当前已有的：
+历史旧路径：
 
 - `/api/v1/server/edge-clients/heartbeat`
 
-后续要收口为：
+当前已收口为：
 
 - `/api/v1/edge-clients/heartbeat`
 
@@ -65,6 +67,7 @@
 
 - `GET /health`
 - `GET /swagger`
+- `GET /scalar`
 - `GET /openapi.yaml`
 
 ### 4.2 discovery / heartbeat
@@ -88,6 +91,7 @@
 - bind 成功且探测通过后，节点进入正式绑定态，随后再把 `clientId/accountId` 写回 Client 本地 JSON
 - `push-client-id` 是 Node -> Client 的写回配套接口，不是 Client 自注册接口
 - unbind 后应清空 Client 本地 `node-registration.json` 留痕
+- 普通 bind 前必须探测 Client `/api/v1/edge/node-registration`；只要 Client 本地已有 `node-registration.json`，普通 bind 一律拒绝，换 Node 必须先旧 Node unbind，旧 Node 不可用时后续走管理员接管流程
 
 ### 4.4 节点查询
 
@@ -112,7 +116,7 @@
 - 顺序必须固定为：先 `recheck` 发现 `ip_mismatch`，再由管理员发起 `confirm-address-update`
 - `slot-reconcile` 用于中心重建 node-slot 关系缓存和节点 slot 摘要
 - `slot-reconcile` 正式按 task + SSE 设计
-- `target-slot-count` 是平台正式下发链路接入前的临时管理员治理入口，用于先把中心目标 slot 数落到 `edge_clients.target_slot_count`
+- `target-slot-count` 已实现为节点治理辅助入口；平台正式下发链路当前暂停，不作为下一阶段任务
 - `GET /slots` 返回中心缓存的当前 node-slot 明细和 slot 摘要，不直接穿透到 Client
 
 ## 5. Phase B：环境聚合查询 API
@@ -158,9 +162,12 @@
 
 说明：
 
+- 当前 `create` 已经落地并已回归：
+  - 同步调用目标 Edge 创建环境包
+  - 成功后写入 `server_browser_envs`
+  - 不使用 SSE
 - 当前 `run` 已经先落最小正式骨架：
   - 必须显式传 `slotId`
-  - 先走中心 run admission
   - 再调用目标 Edge run
   - 最终通过 `server_tasks + SSE` 收口
 - 当前 `stop` 也已经落地：
@@ -179,8 +186,16 @@
   - 采用同步 HTTP
   - 通过 Edge 正式 `/del` 执行
   - 成功后只回写最近同步时间和错误摘要，不删除中心 env 缓存
+- 当前 `revalidate` 已经落地并已回归：
+  - 采用 `server_tasks + SSE`
+  - 只用于异常环境包受控重新校验
+  - Edge success 后重新同步中心 env 缓存
+- 当前 `import-package` 已经落地并已回归：
+  - 采用 `server_tasks + SSE`
+  - 由 Node 转发 tgz 到目标 Edge
+  - Edge success 后回填真实 envId 并写入中心缓存
 - `run` 当前不自动选 slot
-- `create` 还未进入本轮实现
+- 平台额度和 run admission 最终收口当前暂停，不继续展开
 
 ### 6.2 backup / restore / revalidate / import-package
 
@@ -221,7 +236,13 @@
 
 ## 8. Phase E：run admission / platform quota 相关 API
 
-这组 API 不是对终端用户最先开放的业务入口，但中心层要先预留。
+这组 API 当前明确暂停，不作为下一阶段任务。
+
+暂停原因：
+
+- 你已经明确要求“平台额度、slot 数量、run admission 的最终收口先不做”
+- 这部分属于平台商业约束，不应和当前 Node 普通服务能力继续混做
+- 后续恢复时，需要重新从平台、Node、Client 三层关系开始确认
 
 ### 8.1 额度查询
 
@@ -262,33 +283,28 @@ V1 明确不进主线：
 - 任何直接透传 `baseUrl` 去调 Edge 的业务动作接口
 - 任何读取 Edge SQLite 或 Edge 文件系统的接口
 
-## 10. 当前已有 API 与目标 API 的差异
+## 10. 当前 API 状态
 
 ### 当前已经有
 
 - `GET /health`
 - `GET /swagger`
+- `GET /scalar`
 - `GET /openapi.yaml`
 - `GET /api/v1/edge-clients/discovered`
+- `POST /api/v1/edge-clients/heartbeat`
 - `POST /api/v1/edge-clients/bind`
 - `POST /api/v1/edge-clients/{clientId}/push-client-id`
-- `GET /api/v1/edge-clients`
-- `GET /api/v1/edge-clients/{clientId}`
-
-### 当前需要先改路径的
-
-- `POST /api/v1/server/edge-clients/heartbeat`
-
-应改为：
-
-- `POST /api/v1/edge-clients/heartbeat`
-
-### 当前还没开始但必须补的
-
 - `POST /api/v1/edge-clients/{clientId}/unbind`
 - `POST /api/v1/edge-clients/{clientId}/recheck`
 - `POST /api/v1/edge-clients/{clientId}/confirm-address-update`
 - `POST /api/v1/edge-clients/{clientId}/slot-reconcile`
+- `POST /api/v1/edge-clients/{clientId}/target-slot-count`
+- `GET /api/v1/edge-clients/{clientId}/slots`
+- `GET /api/v1/edge-clients/{clientId}/run-quota`
+- `POST /api/v1/edge-clients/{clientId}/run-quota/refresh`
+- `GET /api/v1/edge-clients`
+- `GET /api/v1/edge-clients/{clientId}`
 - `GET /api/v1/browser-envs`
 - `GET /api/v1/browser-envs/{envId}`
 - `POST /api/v1/browser-envs`
@@ -297,13 +313,26 @@ V1 明确不进主线：
 - `POST /api/v1/browser-envs/{envId}/backup`
 - `POST /api/v1/browser-envs/{envId}/restore`
 - `PATCH /api/v1/browser-envs/{envId}/runtime-image`
-- `POST /api/v1/browser-envs/{envId}/revalidate`：已实现并已回归
+- `POST /api/v1/browser-envs/{envId}/revalidate`
 - `POST /api/v1/browser-envs/import-package`
 - `DELETE /api/v1/browser-envs/{envId}/del`
 - `DELETE /api/v1/browser-envs/{envId}/package`
 - `GET /api/v1/server-tasks`
 - `GET /api/v1/server-tasks/{taskId}`
 - `GET /api/v1/server-tasks/{taskId}/events`
+
+### 当前暂停项
+
+- 平台额度正式下发
+- slot 数量商业约束最终收口
+- run admission 最终商业准入
+
+### 当前下一阶段建议
+
+- 不做平台约束
+- 优先做 Node 文档、OpenAPI、回归脚本和管理视图一致性收口
+- 其次补普通运维/诊断类 API 的文档与回归，不改变业务状态机
+- 当前已补充节点接入与会话治理 API 文档，确保 discovery、heartbeat、bind、push、unbind、recheck、confirm-address-update 不再只停留在代码层
 
 ## 11. 推荐实现顺序
 
@@ -340,10 +369,13 @@ V1 明确不进主线：
   - `del`
   - `package`
 
-### 第五步
+### 第五步：暂停
 
-- 接平台额度快照接口
-- 再把 run admission 完整接入
+- 平台额度快照接口
+- slot 数量最终约束
+- run admission 最终商业准入
+
+这一步当前暂停，恢复前必须重新确认需求。
 
 ## 12. 一句话收口
 
@@ -353,6 +385,7 @@ Server V1 的正式 API，不是“先把所有 Edge 接口在中心侧复制一
 
 - 先完成节点治理主线
 - 再完成中心环境与任务事实
-- 最后才把生命周期代理和 run 准入接上
+- 再完成生命周期代理
+- 平台额度和 run admission 最终收口当前暂停
 
 这样 Server 才不会再次退回“只有接口，没有中心事实源”的旧状态。
