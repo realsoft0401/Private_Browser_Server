@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"time"
@@ -67,6 +68,59 @@ type SlotResponse struct {
 type BrowserEnvRunRequest struct {
 	SlotID        string `json:"slotId"`
 	ForceRecreate bool   `json:"forceRecreate"`
+}
+
+// BrowserEnvCreateRequest 是 Node 调用 Edge 创建环境包时透传的正式配置。
+//
+// 这里刻意不包含 clientId/accountId：目标 Client 已由 Node 根据中心节点表选定，
+// Edge 只负责本机环境包文件和 SQLite 索引，不能再承担中心归属判断。
+type BrowserEnvCreateRequest struct {
+	UserID      string                      `json:"userId"`
+	RPAType     string                      `json:"rpaType"`
+	Name        string                      `json:"name"`
+	Runtime     BrowserEnvCreateRuntime     `json:"runtime"`
+	Environment BrowserEnvCreateEnvironment `json:"environment"`
+	Proxy       BrowserEnvCreateProxy       `json:"proxy"`
+}
+
+type BrowserEnvCreateRuntime struct {
+	Image      string `json:"image"`
+	StartupURL string `json:"startupUrl"`
+	ShmSize    string `json:"shmSize"`
+}
+
+type BrowserEnvCreateEnvironment struct {
+	Timezone string                 `json:"timezone"`
+	Language string                 `json:"language"`
+	Screen   BrowserEnvCreateScreen `json:"screen"`
+}
+
+type BrowserEnvCreateScreen struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+	Depth  int `json:"depth"`
+}
+
+type BrowserEnvCreateProxy struct {
+	Enabled      *bool  `json:"enabled"`
+	Type         string `json:"type"`
+	ConfigBase64 string `json:"configBase64"`
+}
+
+// BrowserEnvCreateResponse 是 Edge 创建环境包成功后的同步结果。
+type BrowserEnvCreateResponse struct {
+	EnvID       string `json:"envId"`
+	UserID      string `json:"userId"`
+	RPAType     string `json:"rpaType"`
+	EnvSequence int    `json:"envSequence"`
+	Ports       struct {
+		CDP int `json:"cdp"`
+		VNC int `json:"vnc"`
+	} `json:"ports"`
+	EnvPath      string            `json:"envPath"`
+	Files        map[string]string `json:"files"`
+	IdentityHash string            `json:"identityHash"`
+	CreatedAt    int64             `json:"createdAt"`
 }
 
 // BrowserEnvStopRequest 是 Node 调用 Edge stop 接口时复用的正式请求体。
@@ -234,6 +288,32 @@ func (c *Client) RunBrowserEnv(ctx context.Context, baseURL, envID string, reque
 	return &response, nil
 }
 
+// CreateBrowserEnv 调用目标 Edge 创建本机环境包。
+//
+// 这是短链路同步接口：Edge 成功返回 envId 后，Node 会立即写入 `server_browser_envs`。
+func (c *Client) CreateBrowserEnv(ctx context.Context, baseURL string, request *BrowserEnvCreateRequest) (*BrowserEnvCreateResponse, error) {
+	var response BrowserEnvCreateResponse
+	if err := c.doJSON(ctx, http.MethodPost, strings.TrimRight(strings.TrimSpace(baseURL), "/")+"/api/v1/edge/browser-envs", "", request, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// ImportBrowserEnvPackage 把上传到 Node 的标准 tgz 包流式转发给目标 Edge。
+//
+// 设计边界：
+// - Node 不解析包内容、不落真实资产；
+// - Edge 负责解压、校验、重分配本机端口并返回 Edge task；
+// - Node 后台等待 Edge task 成功后再回读 env detail 写中心缓存。
+func (c *Client) ImportBrowserEnvPackage(ctx context.Context, baseURL, filename string, file io.Reader) (*TaskAcceptedResponse, error) {
+	var response TaskAcceptedResponse
+	endpoint := strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/api/v1/edge/browser-envs/import-package"
+	if err := c.doMultipartFile(ctx, endpoint, "file", filename, file, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
 func (c *Client) StopBrowserEnv(ctx context.Context, baseURL, envID string, request *BrowserEnvStopRequest) (*BrowserEnvStopResponse, error) {
 	var response BrowserEnvStopResponse
 	if err := c.doJSON(ctx, http.MethodPost, strings.TrimRight(strings.TrimSpace(baseURL), "/")+"/api/v1/edge/browser-envs/"+strings.TrimSpace(envID)+"/stop", "", request, &response); err != nil {
@@ -357,6 +437,82 @@ func (c *Client) doJSON(ctx context.Context, method, endpoint, apiKey string, bo
 	}
 	defer resp.Body.Close()
 	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("http status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+	}
+	var envelope Response[json.RawMessage]
+	if err = json.Unmarshal(bodyBytes, &envelope); err != nil {
+		return fmt.Errorf("decode response failed: %w", err)
+	}
+	if envelope.Code != 1000 {
+		return fmt.Errorf("%s", envelope.Message)
+	}
+	if target != nil && len(envelope.Data) > 0 && string(envelope.Data) != "null" {
+		if err = json.Unmarshal(envelope.Data, target); err != nil {
+			return fmt.Errorf("decode response data failed: %w", err)
+		}
+	}
+	return nil
+}
+
+func (c *Client) doMultipartFile(ctx context.Context, endpoint, fieldName, filename string, file io.Reader, target any) error {
+	if c == nil {
+		c = New()
+	}
+	if file == nil {
+		return fmt.Errorf("multipart file reader is nil")
+	}
+
+	bodyReader, bodyWriter := io.Pipe()
+	multipartWriter := multipart.NewWriter(bodyWriter)
+	writeErr := make(chan error, 1)
+	go func() {
+		defer close(writeErr)
+		part, err := multipartWriter.CreateFormFile(fieldName, filename)
+		if err != nil {
+			_ = bodyWriter.CloseWithError(err)
+			writeErr <- err
+			return
+		}
+		if _, err = io.Copy(part, file); err != nil {
+			_ = bodyWriter.CloseWithError(err)
+			writeErr <- err
+			return
+		}
+		if err = multipartWriter.Close(); err != nil {
+			_ = bodyWriter.CloseWithError(err)
+			writeErr <- err
+			return
+		}
+		writeErr <- bodyWriter.Close()
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bodyReader)
+	if err != nil {
+		_ = bodyReader.Close()
+		return fmt.Errorf("build multipart request failed: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		_ = bodyReader.Close()
+		return fmt.Errorf("multipart request failed: %w", err)
+	}
+	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	_ = resp.Body.Close()
+	_ = bodyReader.Close()
+	select {
+	case err = <-writeErr:
+		if err != nil && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			return fmt.Errorf("write multipart payload failed: %w", err)
+		}
+	case <-time.After(5 * time.Second):
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			return fmt.Errorf("write multipart payload timeout")
+		}
+	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("http status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
 	}

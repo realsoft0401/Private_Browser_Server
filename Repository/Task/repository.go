@@ -59,6 +59,8 @@ func (r *Repository) UpdateStatus(ctx context.Context, row *TaskDAO.Row) error {
 		return fmt.Errorf("task row 不能为空")
 	}
 	result, err := CommonRepo.DB().ExecContext(ctx, `UPDATE server_tasks SET
+		env_id = CASE WHEN ? <> '' THEN ? ELSE env_id END,
+		resource_id = CASE WHEN ? <> '' THEN ? ELSE resource_id END,
 		status = CASE WHEN ? <> '' THEN ? ELSE status END,
 		edge_task_id = CASE WHEN ? <> '' THEN ? ELSE edge_task_id END,
 		events_url = CASE WHEN ? <> '' THEN ? ELSE events_url END,
@@ -67,6 +69,8 @@ func (r *Repository) UpdateStatus(ctx context.Context, row *TaskDAO.Row) error {
 		updated_at = CASE WHEN ? > 0 THEN ? ELSE updated_at END,
 		finished_at = CASE WHEN ? > 0 THEN ? ELSE finished_at END
 		WHERE id = ?`,
+		row.EnvID, row.EnvID,
+		row.ResourceID, row.ResourceID,
 		row.Status, row.Status,
 		row.EdgeTaskID, row.EdgeTaskID,
 		row.EventsURL, row.EventsURL,

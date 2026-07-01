@@ -15,6 +15,8 @@
 | 节点治理 | `POST /api/v1/edge-clients/{clientId}/slot-reconcile` | 已实现并已回归 |
 | 节点治理 | `GET /api/v1/edge-clients/{clientId}/run-quota` | 已实现并已回归 |
 | 节点治理 | `POST /api/v1/edge-clients/{clientId}/run-quota/refresh` | 已实现并已回归 |
+| Browser Env 来源 | `POST /api/v1/browser-envs` | 已实现，待真实回归 |
+| Browser Env 来源 | `POST /api/v1/browser-envs/import-package` | 已实现，待真实回归 |
 | Browser Env 查询 | `GET /api/v1/browser-envs` | 已实现并已回归 |
 | Browser Env 查询 | `GET /api/v1/browser-envs/{envId}` | 已实现并已回归 |
 | Browser Env 查询 | `POST /api/v1/browser-envs/{envId}/refresh` | 已实现并已回归 |
@@ -52,6 +54,9 @@
 
 ## 3. Browser Env 查询
 
+- [server-browser-env-create-import.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-browser-env-create-import.md)
+  - `POST /api/v1/browser-envs`
+  - `POST /api/v1/browser-envs/import-package`
 - [server-browser-env-query-apis.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-browser-env-query-apis.md)
   - `GET /api/v1/browser-envs`
   - `GET /api/v1/browser-envs/{envId}`

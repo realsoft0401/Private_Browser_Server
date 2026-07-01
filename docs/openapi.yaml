@@ -963,6 +963,8 @@ paths:
         返回 Node Server 当前缓存的 browser-env 列表。
 
         这条接口当前只读 `server_browser_envs`：
+        - 不强制要求 accountId/userId/rpaType/status
+        - 不传过滤条件时返回中心当前全部有效 env
         - 不直接穿透调用 Edge
         - 不自动触发 env refresh
         - 不返回 Edge 资产原文
@@ -971,7 +973,13 @@ paths:
         - 本接口不使用 SSE
         - 它是普通中心查询接口
       parameters:
-        - $ref: '#/components/parameters/AccountIDQuery'
+        - name: accountId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 按主账号过滤；不传时不过滤账号
+          example: '906090119'
         - name: clientId
           in: query
           required: false
@@ -1035,10 +1043,123 @@ paths:
                           createdAt: 1782799000
                           updatedAt: 1782800010
                           deletedAt: 0
-                missing_account_id:
+    post:
+      tags: [BrowserEnvs]
+      summary: Create browser env on specified Client
+      description: |
+        在指定 `clientId` 对应的 Edge Client 上创建新的 browser-env，并写入 Node 中心缓存 `server_browser_envs`。
+
+        这条接口是中心环境包进入 Node 主视图的正式入口之一：
+        - 调用方必须明确传入 `clientId`
+        - Node 只在该 Client `healthy + verified` 时转发创建
+        - Client 创建成功后返回 envId
+        - Node 立即写入 `server_browser_envs`
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 原因：Edge 创建环境包是短链路同步动作，普通 HTTP 已足够表达最终结果
+        - 创建成功不代表已 run，不会自动拉镜像、创建 slot 或启动容器
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBrowserEnvRequest'
+      responses:
+        '200':
+          description: Browser env created and cached
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseBrowserEnvCreate'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      envId: '906090001_tk_324867594169356288'
+                      clientId: '9060901190003'
+                      accountId: '906090119'
+                      userId: '906090001'
+                      rpaType: tk
+                      name: tk-main-account
+                      status: created
+                      envSequence: 1
+                      ports:
+                        cdp: 9201
+                        vnc: 9101
+                      envPath: data/browser-envs/users/906090001/tk/906090001_tk_324867594169356288
+                      files:
+                        profile: profile.json
+                        binding: binding.json
+                        container: container.json
+                      identityHash: sha256:example
+                      createdAt: 1782799000
+                invalid_body:
                   value:
                     code: 1002
-                    message: accountId 不能为空
+                    message: browser-env create request body 非法，请检查 clientId/userId/rpaType/runtime.image
+                node_not_ready:
+                  value:
+                    code: 1005
+                    message: edge client is not healthy and verified
+  /api/v1/browser-envs/import-package:
+    post:
+      tags: [BrowserEnvs]
+      summary: Import browser env package on specified Client (SSE task)
+      description: |
+        把外部标准 tgz 环境包导入到指定 `clientId` 对应的 Edge Client。
+
+        这是中心环境包进入 Node 主视图的第二个正式入口：
+        - Node 接收 multipart `file`
+        - Node 暂存上传包后转发给指定 Edge Client
+        - Edge 负责解压、校验、重分配本机端口和写入本机 SQLite
+        - Edge task 成功后，Node 回读 Edge detail 并写入 `server_browser_envs`
+
+        SSE 说明：
+        - 本接口使用 SSE
+        - 发起接口本身返回 `application/json`，只表示中心任务接单成功
+        - 调用方必须继续订阅 `data.eventsUrl`，即 `/api/v1/server-tasks/{taskId}/events`
+        - 只有收到 `task.completed` 后，才能认为中心导入和缓存写入完成
+        - SSE 中断后，应通过 `GET /api/v1/server-tasks/{taskId}` 查询终态
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ImportBrowserEnvPackageRequest'
+      responses:
+        '200':
+          description: Import task accepted
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseTaskAccepted'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                accepted:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      taskId: server-task-1782800001001
+                      taskType: browser_env_import_package
+                      resourceType: browser_env
+                      resourceId: ''
+                      clientId: '9060901190003'
+                      eventsUrl: /api/v1/server-tasks/server-task-1782800001001/events
+                missing_client_id:
+                  value:
+                    code: 1002
+                    message: clientId 不能为空
+                missing_file:
+                  value:
+                    code: 1002
+                    message: 缺少导入文件字段 file
   /api/v1/browser-envs/{envId}:
     get:
       tags: [BrowserEnvs]
@@ -1829,6 +1950,13 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/BrowserEnvListResponse'
+    ApiResponseBrowserEnvCreate:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/CreateBrowserEnvResponse'
     ApiResponseBrowserEnvDetail:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
@@ -2209,6 +2337,156 @@ components:
           type: boolean
           description: 是否强制按重建容器链路执行；只允许透传到 Edge 正式 run 协议
           example: false
+    CreateBrowserEnvRequest:
+      type: object
+      required: [clientId, userId, rpaType, runtime, environment]
+      properties:
+        clientId:
+          type: string
+          description: 目标中心 Client 身份；Node 必须按这个节点创建环境包，不自动选机器
+          example: '9060901190003'
+        userId:
+          type: string
+          description: 业务用户标识，只用于环境包目录和 envId，不承担权限含义
+          example: '906090001'
+        rpaType:
+          type: string
+          description: RPA 类型；当前 TikTok 固定使用 tk
+          example: tk
+        name:
+          type: string
+          description: 环境包展示名；为空时可由下游按 envId 展示
+          example: tk-main-account
+        runtime:
+          $ref: '#/components/schemas/CreateBrowserEnvRuntime'
+        environment:
+          $ref: '#/components/schemas/CreateBrowserEnvEnvironment'
+        proxy:
+          $ref: '#/components/schemas/CreateBrowserEnvProxy'
+    CreateBrowserEnvRuntime:
+      type: object
+      required: [image]
+      properties:
+        image:
+          type: string
+          description: 后续 run 使用的正式浏览器运行镜像
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.2-amd64
+        startupUrl:
+          type: string
+          description: 浏览器启动后默认打开地址
+          example: https://www.tiktok.com/
+        shmSize:
+          type: string
+          description: Chromium 容器 shm size
+          example: 1g
+    CreateBrowserEnvEnvironment:
+      type: object
+      properties:
+        timezone:
+          type: string
+          description: 创建时写入 profile 的时区
+          example: America/New_York
+        language:
+          type: string
+          description: 当前业务口径固定 us-en
+          example: us-en
+        screen:
+          $ref: '#/components/schemas/CreateBrowserEnvScreen'
+    CreateBrowserEnvScreen:
+      type: object
+      properties:
+        width:
+          type: integer
+          example: 1280
+        height:
+          type: integer
+          example: 720
+        depth:
+          type: integer
+          example: 24
+    CreateBrowserEnvProxy:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: 是否启用代理
+          example: true
+        type:
+          type: string
+          description: 代理类型；Clash 配置使用 clash
+          example: clash
+        configBase64:
+          type: string
+          description: 代理配置 Base64；OpenAPI 示例不能放真实账号
+          example: cHJveGllczogW10K
+    ImportBrowserEnvPackageRequest:
+      type: object
+      required: [clientId, file]
+      properties:
+        clientId:
+          type: string
+          description: 目标中心 Client 身份；Node 会把 tgz 转发到该节点导入
+          example: '9060901190003'
+        file:
+          type: string
+          format: binary
+          description: 标准 browser-env tgz 包
+    BrowserEnvPorts:
+      type: object
+      properties:
+        cdp:
+          type: integer
+          example: 9201
+        vnc:
+          type: integer
+          example: 9101
+    CreateBrowserEnvResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: '906090001_tk_324867594169356288'
+        clientId:
+          type: string
+          example: '9060901190003'
+        accountId:
+          type: string
+          example: '906090119'
+        userId:
+          type: string
+          example: '906090001'
+        rpaType:
+          type: string
+          example: tk
+        name:
+          type: string
+          example: tk-main-account
+        status:
+          type: string
+          example: created
+        envSequence:
+          type: integer
+          example: 1
+        ports:
+          $ref: '#/components/schemas/BrowserEnvPorts'
+        envPath:
+          type: string
+          example: data/browser-envs/users/906090001/tk/906090001_tk_324867594169356288
+        files:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            profile: profile.json
+            binding: binding.json
+            container: container.json
+        identityHash:
+          type: string
+          example: sha256:example
+        createdAt:
+          type: integer
+          format: int64
+          example: 1782799000
     StopBrowserEnvRequest:
       type: object
       properties:
@@ -2838,6 +3116,10 @@ components:
         resourceId:
           type: string
           description: 当前任务资源主键
+          example: '9060901190003'
+        clientId:
+          type: string
+          description: browser-env 类任务对应的中心 Client 身份；节点治理任务可能为空
           example: '9060901190003'
         eventsUrl:
           type: string

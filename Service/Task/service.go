@@ -3,6 +3,7 @@ package Task
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -132,6 +133,13 @@ func (s *Service) publish(ctx context.Context, taskID string, event TaskModel.Ev
 	item.mu.Lock()
 	item.events = append(item.events, event)
 	item.updatedAt = event.Timestamp
+	if strings.TrimSpace(item.resourceID) == "" {
+		if strings.TrimSpace(event.ResourceID) != "" {
+			item.resourceID = strings.TrimSpace(event.ResourceID)
+		} else if strings.TrimSpace(event.EnvID) != "" {
+			item.resourceID = strings.TrimSpace(event.EnvID)
+		}
+	}
 	for _, subscriber := range item.subscribers {
 		select {
 		case subscriber <- event:
@@ -150,6 +158,8 @@ func (s *Service) publish(ctx context.Context, taskID string, event TaskModel.Ev
 
 	updateRow := &TaskDAO.Row{
 		ID:           taskID,
+		EnvID:        event.EnvID,
+		ResourceID:   event.ResourceID,
 		Status:       taskStatus,
 		ErrorMessage: event.Error,
 		Suggestion:   event.Suggestion,

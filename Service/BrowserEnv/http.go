@@ -3,6 +3,7 @@ package BrowserEnv
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"time"
 
@@ -13,19 +14,74 @@ import (
 	BrowserEnvRepo "private_browser_server/Repository/BrowserEnv"
 )
 
-// List 返回中心当前缓存的 browser-env 列表。
-func List(c *gin.Context) {
-	accountID := strings.TrimSpace(c.Query("accountId"))
-	if accountID == "" {
-		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "accountId 不能为空")
+// Create 是中心 browser-env 创建接口的 HTTP 入口。
+//
+// 当前 create 是同步短链路：Node 根据 clientId 找到目标 Client，调用 Edge 创建环境包，
+// 成功后立即写入中心缓存，不返回 taskId，也不使用 SSE。
+func Create(c *gin.Context) {
+	var request BrowserEnvModel.CreateRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "browser-env create request body 非法，请检查 clientId/userId/rpaType/runtime.image")
 		return
 	}
 
+	requestCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	result, err := NewService().Create(requestCtx, &request)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidCreateParams):
+			HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, err.Error())
+		default:
+			HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeRemoteError, err.Error())
+		}
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
+// ImportPackage 是中心 browser-env import-package 的 HTTP 入口。
+//
+// 它是 SSE 任务接口：HTTP 只负责接收 tgz 和目标 clientId，立即返回中心 taskId/eventsUrl；
+// 后台负责转发 Edge、等待 Edge task 终态，并在成功后写入 server_browser_envs。
+func ImportPackage(c *gin.Context) {
+	clientID := strings.TrimSpace(c.PostForm("clientId"))
+	if clientID == "" {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "clientId 不能为空")
+		return
+	}
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "缺少导入文件字段 file")
+		return
+	}
+	file, err := fileHeader.Open()
+	if err != nil {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInternalError, "打开导入文件失败，请检查上传内容")
+		return
+	}
+	defer file.Close()
+
+	result, err := NewService().ImportPackage(c.Request.Context(), clientID, fileHeader.Filename, file)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "导入文件为空")
+			return
+		}
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeRemoteError, err.Error())
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
+// List 返回中心当前缓存的 browser-env 列表。
+func List(c *gin.Context) {
 	requestCtx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
 	result, err := NewService().List(requestCtx, BrowserEnvModel.ListQuery{
-		AccountID: accountID,
+		AccountID: c.Query("accountId"),
 		ClientID:  c.Query("clientId"),
 		UserID:    c.Query("userId"),
 		RPAType:   c.Query("rpaType"),

@@ -17,6 +17,8 @@
 ### 它负责什么
 
 - 查询 `server_browser_envs`
+- 所有过滤条件都是可选的
+- 不传过滤条件时返回中心当前全部有效 env
 - 支持按下面字段过滤：
   - `accountId`
   - `clientId`
@@ -29,6 +31,14 @@
 - 不自动调用 Edge
 - 不自动刷新 env 缓存
 - 不返回 Edge 原子资产正文
+- 不要求调用方必须先知道导入包里的 `userId`
+
+### 缓存一致性规则
+
+- `server_browser_envs` 是中心聚合缓存，不是 Client 本机事实源
+- 正式业务生命周期动作必须走 Node
+- 如果为了调试直接调用了 Client 的生命周期接口，必须再调用 `POST /api/v1/browser-envs/{envId}/refresh`
+- 否则可能出现 Client 已经 `stopped/missing`，但 Node 列表仍显示旧 `running` 的过期缓存
 
 ### SSE 说明
 

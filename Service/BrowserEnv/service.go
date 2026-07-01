@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -20,11 +22,150 @@ import (
 )
 
 var ErrInvalidParams = errors.New("invalid browser-env run params")
+var ErrInvalidCreateParams = errors.New("invalid browser-env create params")
 
 type Service struct{}
 
 func NewService() *Service {
 	return &Service{}
+}
+
+// Create 在中心指定 Client 上创建一个新的 browser-env，并把结果写入 server_browser_envs。
+//
+// 设计来源：
+// - Server 是中心控制面，必须显式指定 clientId，不能让前端或 Node 自动漂移选机器；
+// - Client 创建接口是短链路同步动作，成功即可返回 envId；
+// - 因此中心这里也保持同步 HTTP，不创建 task，不使用 SSE。
+//
+// 职责边界：
+// - 校验目标节点 healthy + verified；
+// - 调用目标 Edge `POST /api/v1/edge/browser-envs`；
+// - 写入中心聚合缓存；
+// - 不自动 run、不拉镜像、不创建 slot、不保存 profile/proxy/fingerprint 正文。
+func (s *Service) Create(ctx context.Context, request *BrowserEnvModel.CreateRequest) (*BrowserEnvModel.CreateResponse, error) {
+	if request == nil {
+		return nil, fmt.Errorf("%w: 请求体不能为空", ErrInvalidCreateParams)
+	}
+	clientID := strings.TrimSpace(request.ClientID)
+	if clientID == "" || strings.TrimSpace(request.UserID) == "" || strings.TrimSpace(request.RPAType) == "" {
+		return nil, fmt.Errorf("%w: clientId、userId、rpaType 不能为空", ErrInvalidCreateParams)
+	}
+	if strings.TrimSpace(request.Runtime.Image) == "" {
+		return nil, fmt.Errorf("%w: runtime.image 不能为空", ErrInvalidCreateParams)
+	}
+
+	node, err := s.loadReadyNode(ctx, clientID)
+	if err != nil {
+		return nil, err
+	}
+
+	edgeResult, err := EdgeClientService.New().CreateBrowserEnv(ctx, node.BaseURL, toEdgeCreateRequest(request))
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().Unix()
+	createdAt := edgeResult.CreatedAt
+	if createdAt <= 0 {
+		createdAt = now
+	}
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		name = edgeResult.EnvID
+	}
+	if err = BrowserEnvRepo.NewRepository().Upsert(ctx, &BrowserEnvDAO.Row{
+		EnvID:           edgeResult.EnvID,
+		MainAccountID:   node.MainAccountID,
+		ClientID:        node.ClientID,
+		UserID:          edgeResult.UserID,
+		RPAType:         edgeResult.RPAType,
+		Name:            name,
+		Status:          "created",
+		ContainerStatus: "missing",
+		RuntimeStatus:   "created",
+		LastError:       "",
+		LastSyncedAt:    now,
+		CreatedAt:       createdAt,
+		UpdatedAt:       now,
+	}); err != nil {
+		return nil, err
+	}
+
+	return &BrowserEnvModel.CreateResponse{
+		EnvID:        edgeResult.EnvID,
+		ClientID:     node.ClientID,
+		AccountID:    node.MainAccountID,
+		UserID:       edgeResult.UserID,
+		RPAType:      edgeResult.RPAType,
+		Name:         name,
+		Status:       "created",
+		EnvSequence:  edgeResult.EnvSequence,
+		Ports:        BrowserEnvModel.BrowserEnvPorts{CDP: edgeResult.Ports.CDP, VNC: edgeResult.Ports.VNC},
+		EnvPath:      edgeResult.EnvPath,
+		Files:        edgeResult.Files,
+		IdentityHash: edgeResult.IdentityHash,
+		CreatedAt:    createdAt,
+	}, nil
+}
+
+// ImportPackage 创建中心 import-package 任务。
+//
+// 这里先把上传包暂存到 Node 本机临时目录，再交给后台任务转发 Edge。
+// 这个临时文件不是业务资产，后台无论成功失败都必须删除；真正资产仍只由 Client 导入落盘。
+func (s *Service) ImportPackage(ctx context.Context, clientID, filename string, file io.Reader) (*BrowserEnvModel.ImportPackageTaskAcceptedResponse, error) {
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" {
+		return nil, fmt.Errorf("%w: clientId 不能为空", ErrInvalidCreateParams)
+	}
+	if file == nil {
+		return nil, fmt.Errorf("%w: file 不能为空", ErrInvalidCreateParams)
+	}
+
+	requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	node, err := s.loadReadyNode(requestCtx, clientID)
+	if err != nil {
+		return nil, err
+	}
+
+	tempFile, err := os.CreateTemp("", "private-browser-server-import-*.tgz")
+	if err != nil {
+		return nil, fmt.Errorf("create import temp file failed: %w", err)
+	}
+	tempPath := tempFile.Name()
+	if _, err = io.Copy(tempFile, file); err != nil {
+		_ = tempFile.Close()
+		_ = os.Remove(tempPath)
+		return nil, fmt.Errorf("write import temp file failed: %w", err)
+	}
+	if err = tempFile.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return nil, fmt.Errorf("close import temp file failed: %w", err)
+	}
+
+	taskID, err := TaskService.GetService().CreateTask(requestCtx, &TaskDAO.Row{
+		MainAccountID: node.MainAccountID,
+		ClientID:      node.ClientID,
+		TaskType:      "browser_env_import_package",
+		ResourceType:  "browser_env",
+		ResourceID:    "",
+	})
+	if err != nil {
+		_ = os.Remove(tempPath)
+		return nil, err
+	}
+
+	go s.importPackageInBackground(taskID, node.ClientID, node.MainAccountID, node.BaseURL, strings.TrimSpace(filename), tempPath)
+
+	return &BrowserEnvModel.ImportPackageTaskAcceptedResponse{
+		TaskID:       taskID,
+		TaskType:     "browser_env_import_package",
+		ResourceType: "browser_env",
+		ResourceID:   "",
+		ClientID:     node.ClientID,
+		EventsURL:    fmt.Sprintf("/api/v1/server-tasks/%s/events", taskID),
+	}, nil
 }
 
 // List 返回中心当前缓存的 browser-env 列表视图。
@@ -917,6 +1058,150 @@ func (s *Service) deletePackageInBackground(taskID string, env *BrowserEnvModel.
 	}
 }
 
+// importPackageInBackground 负责中心 import-package 的后台编排。
+//
+// 设计来源：
+// - Edge import-package 是正式 SSE 长链路，Node 不能在 HTTP 接单时假装已经导入完成；
+// - 导入成功后的 envId 来自 Edge 包内 profile.json，因此中心必须等 Edge task 成功后再回读 detail；
+// - Node 只保存中心摘要，不保留上传包副本，不解析 profile/proxy/fingerprint 正文。
+func (s *Service) importPackageInBackground(taskID, clientID, accountID, nodeBaseURL, filename, tempPath string) {
+	defer os.Remove(tempPath)
+
+	taskSvc := TaskService.GetService()
+	now := func() string { return time.Now().Format(time.RFC3339) }
+	publishProgress := func(envID, stage, status, message string) {
+		_ = taskSvc.PublishProgress(context.Background(), taskID, TaskModel.Event{
+			Event:        TaskModel.EventProgress,
+			TaskID:       taskID,
+			TaskType:     "browser_env_import_package",
+			ResourceType: "browser_env",
+			ResourceID:   envID,
+			ClientID:     clientID,
+			EnvID:        envID,
+			Stage:        stage,
+			Status:       status,
+			Message:      message,
+			Timestamp:    now(),
+		})
+	}
+	publishFailed := func(envID, stage, message, errMsg, suggestion string) {
+		_ = taskSvc.PublishFailed(context.Background(), taskID, TaskModel.Event{
+			Event:        TaskModel.EventFailed,
+			TaskID:       taskID,
+			TaskType:     "browser_env_import_package",
+			ResourceType: "browser_env",
+			ResourceID:   envID,
+			ClientID:     clientID,
+			EnvID:        envID,
+			Stage:        stage,
+			Status:       TaskModel.StatusFailed,
+			Message:      message,
+			Error:        errMsg,
+			Suggestion:   suggestion,
+			Timestamp:    now(),
+		})
+	}
+	publishCompleted := func(envID string) {
+		_ = taskSvc.PublishCompleted(context.Background(), taskID, TaskModel.Event{
+			Event:        TaskModel.EventCompleted,
+			TaskID:       taskID,
+			TaskType:     "browser_env_import_package",
+			ResourceType: "browser_env",
+			ResourceID:   envID,
+			ClientID:     clientID,
+			EnvID:        envID,
+			Stage:        "finalize_success",
+			Status:       TaskModel.StatusSuccess,
+			Message:      "browser env import completed",
+			Timestamp:    now(),
+		})
+	}
+
+	publishProgress("", "prepare_import_upload", TaskModel.StatusPending, "task accepted")
+
+	file, err := os.Open(tempPath)
+	if err != nil {
+		publishFailed("", "open_import_temp_failed", "open import temp file failed", err.Error(), "retry import-package with a valid tgz file")
+		return
+	}
+	defer file.Close()
+
+	if strings.TrimSpace(filename) == "" {
+		filename = "browser-env-import.tgz"
+	}
+
+	requestCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	edgeAccepted, err := EdgeClientService.New().ImportBrowserEnvPackage(requestCtx, nodeBaseURL, filename, file)
+	cancel()
+	if err != nil {
+		publishFailed("", "dispatch_edge_import_failed", "dispatch edge import failed", err.Error(), "check edge client reachability and import package format")
+		return
+	}
+
+	_ = TaskRepo.NewRepository().UpdateStatus(context.Background(), &TaskDAO.Row{
+		ID:         taskID,
+		Status:     TaskModel.StatusRunning,
+		EdgeTaskID: edgeAccepted.TaskID,
+		UpdatedAt:  time.Now().Unix(),
+	})
+	publishProgress("", "edge_task_accepted", TaskModel.StatusRunning, fmt.Sprintf("edge task accepted: %s", edgeAccepted.TaskID))
+
+	lastStage := ""
+	lastStatus := ""
+	lastEnvID := ""
+	for {
+		pollCtx, pollCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		detail, detailErr := EdgeClientService.New().GetTaskDetail(pollCtx, nodeBaseURL, edgeAccepted.TaskID)
+		pollCancel()
+		if detailErr != nil {
+			publishFailed(lastEnvID, "edge_task_detail_failed", "load edge task detail failed", detailErr.Error(), "check edge task state and edge logs")
+			return
+		}
+		if strings.TrimSpace(detail.ResourceID) != "" {
+			lastEnvID = strings.TrimSpace(detail.ResourceID)
+		}
+
+		if detail.CurrentStage != "" && (detail.CurrentStage != lastStage || detail.Status != lastStatus) {
+			lastStage = detail.CurrentStage
+			lastStatus = detail.Status
+			publishProgress(lastEnvID, "edge."+detail.CurrentStage, detail.Status, detail.Message)
+		}
+
+		switch detail.Status {
+		case TaskModel.StatusSuccess:
+			if strings.TrimSpace(lastEnvID) == "" {
+				publishFailed("", "finalize_missing_env_id", "edge import succeeded but envId is missing", "edge task detail resourceId is empty", "upgrade edge client and retry import-package")
+				return
+			}
+			syncEnv := &BrowserEnvModel.ServerBrowserEnv{
+				EnvID:         lastEnvID,
+				MainAccountID: accountID,
+				ClientID:      clientID,
+				LastTaskID:    taskID,
+				CreatedAt:     time.Now().Unix(),
+			}
+			syncCtx, syncCancel := context.WithTimeout(context.Background(), 20*time.Second)
+			syncErr := s.syncEnvFromEdge(syncCtx, syncEnv, taskID, "", edgeAccepted.TaskID, nodeBaseURL)
+			syncCancel()
+			if syncErr != nil {
+				publishFailed(lastEnvID, "finalize_sync_failed", "edge import succeeded but env sync failed", syncErr.Error(), "call browser-env refresh after checking edge detail")
+				return
+			}
+			publishCompleted(lastEnvID)
+			return
+		case TaskModel.StatusFailed:
+			errMsg := detail.Error
+			if strings.TrimSpace(errMsg) == "" {
+				errMsg = detail.Message
+			}
+			publishFailed(lastEnvID, "finalize_edge_failed", "browser env import failed", errMsg, detail.Suggestion)
+			return
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+}
+
 type edgeLifecycleTaskConfig struct {
 	TaskType            string
 	StartStage          string
@@ -1183,4 +1468,31 @@ func normalizeServerBrowserEnvStopTimeout(request *BrowserEnvModel.StopRequest) 
 		return 3600
 	}
 	return request.TimeoutSeconds
+}
+
+func toEdgeCreateRequest(request *BrowserEnvModel.CreateRequest) *EdgeClientService.BrowserEnvCreateRequest {
+	return &EdgeClientService.BrowserEnvCreateRequest{
+		UserID:  strings.TrimSpace(request.UserID),
+		RPAType: strings.TrimSpace(request.RPAType),
+		Name:    strings.TrimSpace(request.Name),
+		Runtime: EdgeClientService.BrowserEnvCreateRuntime{
+			Image:      strings.TrimSpace(request.Runtime.Image),
+			StartupURL: strings.TrimSpace(request.Runtime.StartupURL),
+			ShmSize:    strings.TrimSpace(request.Runtime.ShmSize),
+		},
+		Environment: EdgeClientService.BrowserEnvCreateEnvironment{
+			Timezone: strings.TrimSpace(request.Environment.Timezone),
+			Language: strings.TrimSpace(request.Environment.Language),
+			Screen: EdgeClientService.BrowserEnvCreateScreen{
+				Width:  request.Environment.Screen.Width,
+				Height: request.Environment.Screen.Height,
+				Depth:  request.Environment.Screen.Depth,
+			},
+		},
+		Proxy: EdgeClientService.BrowserEnvCreateProxy{
+			Enabled:      request.Proxy.Enabled,
+			Type:         strings.TrimSpace(request.Proxy.Type),
+			ConfigBase64: strings.TrimSpace(request.Proxy.ConfigBase64),
+		},
+	}
 }

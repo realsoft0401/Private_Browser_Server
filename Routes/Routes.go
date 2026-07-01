@@ -76,6 +76,8 @@ func Setup() *gin.Engine {
 	serverTasks.GET("/:taskId/events", TaskService.SubscribeEvents)
 	browserEnvs := apiV1.Group("/browser-envs")
 	browserEnvs.GET("", BrowserEnvService.List)
+	browserEnvs.POST("", BrowserEnvService.Create)
+	browserEnvs.POST("/import-package", BrowserEnvService.ImportPackage)
 	browserEnvs.GET("/:envId", BrowserEnvService.GetDetail)
 	browserEnvs.POST("/:envId/refresh", BrowserEnvService.Refresh)
 	browserEnvs.POST("/:envId/run", BrowserEnvService.Run)
