@@ -22,6 +22,7 @@
 | Browser Env 生命周期 | `POST /api/v1/browser-envs/{envId}/stop` | 已实现并已回归 |
 | Browser Env 生命周期 | `POST /api/v1/browser-envs/{envId}/backup` | 已实现并已回归 |
 | Browser Env 生命周期 | `POST /api/v1/browser-envs/{envId}/restore` | 已实现并已回归 |
+| Browser Env 生命周期 | `PATCH /api/v1/browser-envs/{envId}/runtime-image` | 已实现并已回归 |
 | Browser Env 生命周期 | `DELETE /api/v1/browser-envs/{envId}/package` | 已实现并已回归 |
 | Browser Env 生命周期 | `DELETE /api/v1/browser-envs/{envId}/del` | 已实现并已回归 |
 | 中心 Task | `GET /api/v1/server-tasks/{taskId}` | 已实现并已用于现有任务链 |
@@ -68,6 +69,8 @@
   - `POST /api/v1/browser-envs/{envId}/backup`
 - [server-browser-env-restore.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-browser-env-restore.md)
   - `POST /api/v1/browser-envs/{envId}/restore`
+- [server-browser-env-runtime-image.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-browser-env-runtime-image.md)
+  - `PATCH /api/v1/browser-envs/{envId}/runtime-image`
 - [server-browser-env-delete-package.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-browser-env-delete-package.md)
   - `DELETE /api/v1/browser-envs/{envId}/package`
 - [server-browser-env-delete-image.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-browser-env-delete-image.md)

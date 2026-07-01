@@ -74,6 +74,22 @@ type BrowserEnvStopRequest struct {
 	TimeoutSeconds int `json:"timeoutSeconds"`
 }
 
+// BrowserEnvRuntimeImageRequest 是 Node 调用 Edge 修改 runtime.image 的最小请求体。
+//
+// 这条链路只更新环境包运行契约，不触发拉镜像、run 或 slot reinit。
+type BrowserEnvRuntimeImageRequest struct {
+	Image string `json:"image"`
+}
+
+// BrowserEnvRuntimeImageResponse 是 Edge runtime.image 修改接口的同步结果。
+type BrowserEnvRuntimeImageResponse struct {
+	EnvID         string `json:"envId"`
+	Status        string `json:"status"`
+	PreviousImage string `json:"previousImage"`
+	Image         string `json:"image"`
+	UpdatedAt     int64  `json:"updatedAt"`
+}
+
 // BrowserEnvBackupResponse 是 Edge backup 接口的接单结果。
 //
 // 设计边界：
@@ -115,12 +131,12 @@ type BrowserEnvDeleteImageResult struct {
 
 // BrowserEnvDeleteImageResponse 是 Edge `/del` 接口的同步结果。
 type BrowserEnvDeleteImageResponse struct {
-	EnvID          string                       `json:"envId"`
-	Image          string                       `json:"image"`
-	ImageRemoved   bool                         `json:"imageRemoved"`
+	EnvID          string                        `json:"envId"`
+	Image          string                        `json:"image"`
+	ImageRemoved   bool                          `json:"imageRemoved"`
 	Results        []BrowserEnvDeleteImageResult `json:"results"`
-	WarningMessage string                       `json:"warningMessage"`
-	DeletedAt      int64                        `json:"deletedAt"`
+	WarningMessage string                        `json:"warningMessage"`
+	DeletedAt      int64                         `json:"deletedAt"`
 }
 
 // TaskAcceptedResponse 是 Edge SSE 任务接口的统一接单返回。
@@ -221,6 +237,24 @@ func (c *Client) RunBrowserEnv(ctx context.Context, baseURL, envID string, reque
 func (c *Client) StopBrowserEnv(ctx context.Context, baseURL, envID string, request *BrowserEnvStopRequest) (*BrowserEnvStopResponse, error) {
 	var response BrowserEnvStopResponse
 	if err := c.doJSON(ctx, http.MethodPost, strings.TrimRight(strings.TrimSpace(baseURL), "/")+"/api/v1/edge/browser-envs/"+strings.TrimSpace(envID)+"/stop", "", request, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// UpdateBrowserEnvRuntimeImage 调用目标 Edge 的 runtime.image 修改接口。
+//
+// 这条调用保持“单次 HTTP、无重试、无 SSE”的边界，避免中心底层客户端偷偷把配置修改升级成生命周期动作。
+func (c *Client) UpdateBrowserEnvRuntimeImage(
+	ctx context.Context,
+	baseURL string,
+	envID string,
+	request *BrowserEnvRuntimeImageRequest,
+) (*BrowserEnvRuntimeImageResponse, error) {
+	var response BrowserEnvRuntimeImageResponse
+	endpoint := strings.TrimRight(strings.TrimSpace(baseURL), "/") +
+		"/api/v1/edge/browser-envs/" + strings.TrimSpace(envID) + "/runtime-image"
+	if err := c.doJSON(ctx, http.MethodPatch, endpoint, "", request, &response); err != nil {
 		return nil, err
 	}
 	return &response, nil

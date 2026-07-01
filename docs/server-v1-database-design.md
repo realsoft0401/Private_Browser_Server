@@ -247,6 +247,10 @@ deleted_at
   - 默认基础镜像：配置层事实
   - slot 当前实际 `runtimeImage`：slot 关系层事实
   - browser-env 正式 `runtime.image`：browser-env 聚合层事实
+- browser-env 正式 `runtime.image` 只能通过受控 runtime-image 修改接口显式变更。
+- 该变更必须要求中心 env 状态为 `created` 或 `stopped`；其它状态不能修改，避免运行中镜像事实漂移。
+- `created` 表示首次运行前配置态；`stopped` 表示运行后已与 slot/container 彻底隔离的干净态；二者都允许修改 runtime.image。
+- 修改后只更新 env 运行契约，不代表镜像已拉取、slot 已重建或容器已切换。
 
 ### 地址与设备事实
 

@@ -1280,6 +1280,70 @@ paths:
                   value:
                     code: 1005
                     message: edge client is not healthy and verified
+  /api/v1/browser-envs/{envId}/runtime-image:
+    patch:
+      tags: [BrowserEnvs]
+      summary: Update browser env runtime image from Node Server
+      description: |
+        同步 runtime-image 接口。发起后由 Node 校验中心 env 和目标节点，再调用目标 Edge 修改该 env 后续 run 使用的 `runtime.image`。
+
+        这条接口当前负责：
+        - 读取 `server_browser_envs` 聚合记录
+        - 校验目标节点当前 `healthy + verified`
+        - 校验 env 处于 created 或 stopped 状态
+        - 调用目标 Edge 正式 `PATCH /api/v1/edge/browser-envs/{envId}/runtime-image`
+        - 回写中心 env 最近同步时间和错误摘要
+
+        业务边界：
+        - 不自动 run
+        - 不自动 pull image
+        - 不自动 reinit slot
+        - 不修改 slot 当前实际 `runtimeImage`
+        - `created` 表示首次运行前配置态；`stopped` 表示运行后已与 slot/container 彻底隔离的干净态
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 原因：当前 runtime-image 是配置修改同步动作，普通 HTTP 足够表达最终结果
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRuntimeImageRequest'
+            examples:
+              default:
+                value:
+                  image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.2-amd64
+      responses:
+        '200':
+          description: Runtime image updated
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseBrowserEnvRuntimeImage'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      envId: '906090001_tk_324867594169356288'
+                      status: stopped
+                      previousImage: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+                      image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.2-amd64
+                      updatedAt: 1782800010
+                env_not_found:
+                  value:
+                    code: 1004
+                    message: server browser env not found
+                conflict:
+                  value:
+                    code: 1005
+                    message: 环境包当前状态为 running，只有 created 或 stopped 状态才允许修改 runtime.image
   /api/v1/browser-envs/{envId}/backup:
     post:
       tags: [BrowserEnvs]
@@ -1786,6 +1850,13 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/StopBrowserEnvResponse'
+    ApiResponseBrowserEnvRuntimeImage:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/UpdateRuntimeImageResponse'
     ApiResponseServerTaskDetail:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
@@ -2146,6 +2217,34 @@ components:
           format: int64
           description: 透传给 Edge 正式 stop 协议的 Docker 优雅停止等待秒数；不传时按服务端默认值执行
           example: 10
+    UpdateRuntimeImageRequest:
+      type: object
+      required: [image]
+      properties:
+        image:
+          type: string
+          description: 完整 Docker image 引用；Node 不拆 tag，不拼默认值
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.2-amd64
+    UpdateRuntimeImageResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: '906090001_tk_324867594169356288'
+        status:
+          type: string
+          description: 当前 env 状态；本接口只允许 created 或 stopped 修改
+          example: stopped
+        previousImage:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.2-amd64
+        updatedAt:
+          type: integer
+          format: int64
+          example: 1782800010
     ServerBrowserEnv:
       type: object
       properties:

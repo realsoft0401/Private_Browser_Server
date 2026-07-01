@@ -113,6 +113,35 @@ func Stop(c *gin.Context) {
 	HttpResponse.ResponseSuccess(c, result)
 }
 
+// UpdateRuntimeImage 是中心 browser-env 运行镜像修改接口的 HTTP 入口。
+//
+// 当前它是同步短链路，不创建中心 task：
+// - 只解析 envId + image；
+// - 业务准入、节点校验、Edge 调用和中心缓存刷新放在 Service；
+// - 不把它伪装成 SSE 接口，避免调用方把配置修改和真正 run 混在一起。
+func UpdateRuntimeImage(c *gin.Context) {
+	var request BrowserEnvModel.UpdateRuntimeImageRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "browser-env runtime-image request body 非法，请检查 image")
+		return
+	}
+
+	requestCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	result, err := NewService().UpdateRuntimeImage(requestCtx, c.Param("envId"), &request)
+	if err != nil {
+		switch {
+		case errors.Is(err, BrowserEnvRepo.ErrNotFound):
+			HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeNotFound, "server browser env not found")
+		default:
+			HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeRemoteError, err.Error())
+		}
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
 // Backup 是中心 browser-env backup 接口的 HTTP 入口。
 //
 // 当前 backup 被明确定义为中心长链路任务：

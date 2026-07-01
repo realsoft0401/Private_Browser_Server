@@ -222,6 +222,104 @@ func (s *Service) Stop(ctx context.Context, envID string, request *BrowserEnvMod
 	}, nil
 }
 
+// UpdateRuntimeImage 修改中心已绑定 browser-env 的正式运行镜像。
+//
+// 设计来源：
+//   - 镜像地址属于 browser-env 运行契约，不属于 slot 默认基础镜像；
+//   - created 是首次运行前配置态，stopped 是运行后已释放 slot/container 关系的干净隔离态；
+//   - 因此只允许在 created/stopped 修改，不能在运行中、归档态或异常态热改。
+//
+// 职责边界：
+// - 负责中心 env/节点准入、调用 Edge 同步修改、刷新中心缓存摘要；
+// - 不创建 server task，不订阅 SSE；
+// - 不拉镜像、不 run、不 reinit slot、不删除旧镜像。
+func (s *Service) UpdateRuntimeImage(
+	ctx context.Context,
+	envID string,
+	request *BrowserEnvModel.UpdateRuntimeImageRequest,
+) (*BrowserEnvModel.UpdateRuntimeImageResponse, error) {
+	envID = strings.TrimSpace(envID)
+	if envID == "" {
+		return nil, fmt.Errorf("envId 不能为空")
+	}
+	if request == nil {
+		return nil, fmt.Errorf("请求参数不能为空")
+	}
+	image := strings.TrimSpace(request.Image)
+	if image == "" {
+		return nil, fmt.Errorf("runtime.image 不能为空")
+	}
+
+	env, err := BrowserEnvRepo.NewRepository().GetByEnvID(ctx, envID)
+	if err != nil {
+		return nil, err
+	}
+	if !isServerBrowserEnvRuntimeImageEditableState(env.Status) {
+		return nil, fmt.Errorf("环境包当前状态为 %s，只有 created 或 stopped 状态才允许修改 runtime.image", env.Status)
+	}
+
+	node, err := s.loadReadyNode(ctx, env.ClientID)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := EdgeClientService.New().UpdateBrowserEnvRuntimeImage(
+		ctx,
+		node.BaseURL,
+		env.EnvID,
+		&EdgeClientService.BrowserEnvRuntimeImageRequest{Image: image},
+	)
+	if err != nil {
+		_ = s.updateEnvAfterFailure(ctx, env, env.LastTaskID, err.Error())
+		return nil, err
+	}
+
+	now := time.Now().Unix()
+	if upsertErr := BrowserEnvRepo.NewRepository().Upsert(ctx, &BrowserEnvDAO.Row{
+		EnvID:           env.EnvID,
+		MainAccountID:   env.MainAccountID,
+		ClientID:        env.ClientID,
+		UserID:          env.UserID,
+		RPAType:         env.RPAType,
+		Name:            env.Name,
+		Status:          result.Status,
+		ContainerStatus: env.ContainerStatus,
+		RuntimeStatus:   result.Status,
+		CurrentSlotID:   env.CurrentSlotID,
+		CDPURL:          env.CDPURL,
+		WebVNCURL:       env.WebVNCURL,
+		LastTaskID:      env.LastTaskID,
+		LastError:       "",
+		LastSyncedAt:    now,
+		CreatedAt:       env.CreatedAt,
+		UpdatedAt:       now,
+		DeletedAt:       env.DeletedAt,
+	}); upsertErr != nil {
+		return nil, upsertErr
+	}
+
+	return &BrowserEnvModel.UpdateRuntimeImageResponse{
+		EnvID:         result.EnvID,
+		Status:        result.Status,
+		PreviousImage: result.PreviousImage,
+		Image:         result.Image,
+		UpdatedAt:     result.UpdatedAt,
+	}, nil
+}
+
+// isServerBrowserEnvRuntimeImageEditableState 集中收口中心层 runtime.image 修改准入状态。
+//
+// created 是首次运行前配置态，stopped 是运行后与 slot/container 完全隔离的干净态。
+// 不能把 running/backed_up/deleted/error 放进来，否则会造成配置契约和运行事实漂移。
+func isServerBrowserEnvRuntimeImageEditableState(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "created", "stopped":
+		return true
+	default:
+		return false
+	}
+}
+
 // Backup 创建中心 browser-env backup 任务，并在后台编排 Edge backup 与终态同步。
 //
 // 设计来源：

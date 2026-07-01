@@ -80,6 +80,7 @@ func Setup() *gin.Engine {
 	browserEnvs.POST("/:envId/refresh", BrowserEnvService.Refresh)
 	browserEnvs.POST("/:envId/run", BrowserEnvService.Run)
 	browserEnvs.POST("/:envId/stop", BrowserEnvService.Stop)
+	browserEnvs.PATCH("/:envId/runtime-image", BrowserEnvService.UpdateRuntimeImage)
 	browserEnvs.POST("/:envId/backup", BrowserEnvService.Backup)
 	browserEnvs.POST("/:envId/restore", BrowserEnvService.Restore)
 	browserEnvs.DELETE("/:envId/del", BrowserEnvService.DeleteImage)

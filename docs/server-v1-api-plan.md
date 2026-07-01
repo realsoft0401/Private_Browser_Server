@@ -186,6 +186,7 @@
 
 - `POST /api/v1/browser-envs/{envId}/backup`
 - `POST /api/v1/browser-envs/{envId}/restore`
+- `PATCH /api/v1/browser-envs/{envId}/runtime-image`
 - `POST /api/v1/browser-envs/{envId}/revalidate`
 - `POST /api/v1/browser-envs/import-package`
 
@@ -295,6 +296,7 @@ V1 明确不进主线：
 - `POST /api/v1/browser-envs/{envId}/stop`
 - `POST /api/v1/browser-envs/{envId}/backup`
 - `POST /api/v1/browser-envs/{envId}/restore`
+- `PATCH /api/v1/browser-envs/{envId}/runtime-image`
 - `POST /api/v1/browser-envs/{envId}/revalidate`
 - `POST /api/v1/browser-envs/import-package`
 - `DELETE /api/v1/browser-envs/{envId}/del`

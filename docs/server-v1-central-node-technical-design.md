@@ -237,6 +237,9 @@ Platform Server
 2. Node 可以显式触发某个 waiting slot 的基础镜像重初始化升级
 3. Node 可以显式触发某个 browser-env 的正式运行镜像变更
 4. Node 不能因为默认镜像从 `1.1` 变成 `1.2`，就自动覆盖老 slot 或老 env 的当前镜像事实
+5. Node 修改 browser-env 正式运行镜像时，中心 env 状态必须是 `created` 或 `stopped`；`loading/running/ending/backed_up/deleted/error` 一律拒绝
+6. browser-env 镜像修改后不自动 run、不自动 pull image、不自动 reinit slot，下一次 run 才读取新的 `runtime.image`
+7. `created` 表示首次运行前配置态；`stopped` 表示运行后已与 slot/container 彻底隔离的干净态；二者都允许修改 runtime.image
 
 约束：
 
