@@ -215,7 +215,7 @@ func ensureClientRegistrationUnlocked(ctx context.Context, baseURL string) error
 	}
 	registration := status.CachedRegistration
 	return fmt.Errorf(
-		"该 Client 已存在 node-registration.json，普通 bind 被拒绝；请先从旧 Node unbind 清理本地注册，或后续走管理员接管流程；currentNode=%s clientId=%s accountId=%s",
+		"该 Client 已存在 node-registration.json，普通 bind 被拒绝；请先从旧 Node unbind 清理本地注册；旧 Node 不可用时由管理员手动删除 Client 本地注册文件后再重新 bind；currentNode=%s clientId=%s accountId=%s",
 		strings.TrimSpace(registration.NodeServerBaseURL),
 		strings.TrimSpace(registration.ClientID),
 		strings.TrimSpace(registration.MainAccountID),

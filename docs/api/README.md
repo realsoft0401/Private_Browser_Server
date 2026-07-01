@@ -56,6 +56,8 @@
   - `POST /api/v1/edge-clients/{clientId}/unbind`
   - `POST /api/v1/edge-clients/{clientId}/recheck`
   - `POST /api/v1/edge-clients/{clientId}/confirm-address-update`
+- [server-deploy-regression.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-deploy-regression.md)
+  - Node Server 镜像构建 / Docker 运行 / Scalar / discovered / bind 锁回归
 
 - [server-slot-governance-apis.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-slot-governance-apis.md)
   - `GET /api/v1/edge-clients/{clientId}/slots`

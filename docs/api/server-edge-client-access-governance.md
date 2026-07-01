@@ -165,7 +165,7 @@ curl -s -X POST "$SERVER_BASE/api/v1/edge-clients/bind" \
 
 - 已绑定到当前账号：返回无需重复绑定。
 - 已绑定到其它账号：必须先解绑，不能静默覆盖。
-- Client 本地已有 `node-registration.json`：普通 bind 必须拒绝。需要换 Node 时先旧 Node unbind；旧 Node 不可用时后续走管理员接管流程，不能在普通 bind 中覆盖。
+- Client 本地已有 `node-registration.json`：普通 bind 必须拒绝。需要换 Node 时先旧 Node unbind；旧 Node 不可用时由管理员手动登录 Client 机器删除本地注册文件，再由新 Node 重新发起普通 bind。当前不提供 force bind 接口。
 - 探测失败：不创建正式节点。
 - push 写回失败：bind 不回滚，但 `pushStatus=failed`，管理员可重试 push。
 
@@ -364,6 +364,7 @@ curl -s -X POST "$SERVER_BASE/api/v1/edge-clients/$CLIENT_ID/confirm-address-upd
 - heartbeat 未匹配已知节点时不能创建正式节点。
 - 同一 Client 绑定到其它账号时必须拒绝。
 - Client 本地已有 `node-registration.json` 时，普通 bind 必须拒绝。
+- 旧 Node 不可用时，管理员手动删除 Client 本地 `/Business/data/node-registration.json` 后才能重新 bind。
 - recheck 探测失败时必须落 `offline + blocked + probe_failed`。
 - 地址变化必须先 recheck 发现，再由管理员 confirm-address-update。
 - unbind 后本地清理失败不能回滚中心解绑，但必须返回清理失败原因。

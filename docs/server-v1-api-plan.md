@@ -91,7 +91,7 @@
 - bind 成功且探测通过后，节点进入正式绑定态，随后再把 `clientId/accountId` 写回 Client 本地 JSON
 - `push-client-id` 是 Node -> Client 的写回配套接口，不是 Client 自注册接口
 - unbind 后应清空 Client 本地 `node-registration.json` 留痕
-- 普通 bind 前必须探测 Client `/api/v1/edge/node-registration`；只要 Client 本地已有 `node-registration.json`，普通 bind 一律拒绝，换 Node 必须先旧 Node unbind，旧 Node 不可用时后续走管理员接管流程
+- 普通 bind 前必须探测 Client `/api/v1/edge/node-registration`；只要 Client 本地已有 `node-registration.json`，普通 bind 一律拒绝。换 Node 必须先旧 Node unbind；旧 Node 不可用时，由管理员手动登录 Client 机器删除本地注册文件后，再由新 Node 重新发起普通 bind。当前不提供 force bind 接口。
 
 ### 4.4 节点查询
 

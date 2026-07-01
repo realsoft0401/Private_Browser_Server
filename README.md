@@ -48,8 +48,11 @@ http://127.0.0.1:3400/openapi.yaml
 
 其中 `/scalar` 是唯一 Scalar 正式入口，不维护独立 Scalar 展示服务，也不新增单独 Dockerfile。
 
+## 镜像构建
 
+当前统一构建入口是：
 
+```bash
 cd /Users/lining/Documents/Browser_virtualization/Private_Browser_Server
 DEBIAN_MIRROR=deb.debian.org \
 ./scripts/build-server-image.sh \
@@ -57,12 +60,32 @@ DEBIAN_MIRROR=deb.debian.org \
   --image crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_node_server \
   --tag 0.1.1-arm64 \
   --push
+```
 
+如果目标机器是 `amd64`，把平台和 tag 改成：
 
+```bash
+--platform linux/amd64
+--tag 0.1.1-amd64
+```
 
-  docker run -d \
+## Docker 运行
+
+Node Server 需要监听 `3400/tcp` 和 `43000/udp`，正式部署建议使用 host 网络：
+
+```bash
+docker run -d \
   --name private-browser-node-server \
   --restart always \
   --network host \
   -v /Business/server-data:/app/data \
-crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_node_server:0.1.1-arm64
+  crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_node_server:0.1.1-arm64
+```
+
+验证入口：
+
+```bash
+curl -s http://127.0.0.1:3400/health | jq
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3400/swagger
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3400/scalar
+```

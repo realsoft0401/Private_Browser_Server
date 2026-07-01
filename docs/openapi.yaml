@@ -228,7 +228,8 @@ paths:
         关键规则：
         - 同一 Client 已被其它账号绑定时，必须拒绝重复绑定
         - Client 本地已有 `node-registration.json` 时，普通 bind 必须拒绝
-        - 换 Node 必须先旧 Node unbind；旧 Node 不可用时后续走管理员接管流程
+        - 换 Node 必须先旧 Node unbind；旧 Node 不可用时由管理员手动登录 Client 机器删除本地注册文件后再重新 bind
+        - 当前不提供 force bind 接口
         - bind 成功但 push 失败时，不回滚 bind，只返回 `pushStatus=failed`
 
         补充说明：
@@ -299,7 +300,7 @@ paths:
                 registration_locked:
                   value:
                     code: 1005
-                    message: 该 Client 已存在 node-registration.json，普通 bind 被拒绝；请先从旧 Node unbind 清理本地注册，或后续走管理员接管流程；currentNode=http://192.168.111.220:3400 clientId=9060901190003 accountId=906090119
+                    message: 该 Client 已存在 node-registration.json，普通 bind 被拒绝；请先从旧 Node unbind 清理本地注册；旧 Node 不可用时由管理员手动删除 Client 本地注册文件后再重新 bind；currentNode=http://192.168.111.220:3400 clientId=9060901190003 accountId=906090119
   /api/v1/edge-clients/{clientId}/push-client-id:
     post:
       tags: [Binding]
