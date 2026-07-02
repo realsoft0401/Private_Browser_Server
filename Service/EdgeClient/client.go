@@ -90,6 +90,30 @@ type SlotResponse struct {
 	UpdatedAt        int64  `json:"updatedAt"`
 }
 
+// CreateSlotRequest 是 Node 调用 Edge 创建本机 slot 时的最小请求体。
+//
+// 设计边界：
+// - slotId 必须由 Node 管理端明确传入，Client 不负责自动编号；
+// - Node 不在这里夹带 targetSlotCount，目标数属于中心治理字段，会在动作成功后由 Node 自己更新；
+// - 这样可以避免 Edge 资源事实和中心治理事实互相污染。
+type CreateSlotRequest struct {
+	SlotID string `json:"slotId"`
+}
+
+// DestroySlotRequest 是 Node 调用 Edge 删除本机 slot 时的最小请求体。
+//
+// 当前 Admin Demo 只暴露 waiting slot 的普通删除，默认 force=false；
+// force 保留给后续管理员强制清理，但不应被页面默认使用。
+type DestroySlotRequest struct {
+	Force bool `json:"force"`
+}
+
+// DestroySlotResponse 是 Edge 删除 slot 成功后的同步结果。
+type DestroySlotResponse struct {
+	SlotID string `json:"slotId"`
+	Status string `json:"status"`
+}
+
 // BrowserEnvRunRequest 是 Node 调用 Edge run 接口时使用的最小正式请求体。
 //
 // 设计边界：
@@ -323,6 +347,32 @@ func (c *Client) ListSlots(ctx context.Context, baseURL string) ([]SlotResponse,
 		return nil, err
 	}
 	return response, nil
+}
+
+// CreateSlot 调用目标 Edge 创建本机 slot。
+//
+// 这是同步资源治理接口：Edge 返回成功只代表本机 slot 已创建；
+// Node 还必须随后重新读取 `/api/v1/edge/slots` 并刷新中心缓存，不能把单条返回当成完整 slot 摘要。
+func (c *Client) CreateSlot(ctx context.Context, baseURL string, request *CreateSlotRequest) (*SlotResponse, error) {
+	var response SlotResponse
+	if err := c.doJSON(ctx, http.MethodPost, strings.TrimRight(strings.TrimSpace(baseURL), "/")+"/api/v1/edge/slots", "", request, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// DestroySlot 调用目标 Edge 删除本机 slot。
+//
+// 设计边界：
+// - 删除前的状态校验仍由 Edge 负责，因为 Edge 才知道 slot 当前本机事实；
+// - Node 成功后必须重新对账，避免中心缓存里残留已删除 slot。
+func (c *Client) DestroySlot(ctx context.Context, baseURL, slotID string, request *DestroySlotRequest) (*DestroySlotResponse, error) {
+	var response DestroySlotResponse
+	endpoint := strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/api/v1/edge/slots/" + strings.TrimSpace(slotID)
+	if err := c.doJSON(ctx, http.MethodDelete, endpoint, "", request, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
 }
 
 func (c *Client) RunBrowserEnv(ctx context.Context, baseURL, envID string, request *BrowserEnvRunRequest) (*TaskAcceptedResponse, error) {

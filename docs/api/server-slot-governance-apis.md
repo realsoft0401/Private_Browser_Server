@@ -1,8 +1,10 @@
 # Server Slot Governance APIs
 
-这份文档只说明两条新的 Node Server slot 治理接口边界：
+这份文档说明 Node Server slot 治理接口边界：
 
 - `GET /api/v1/edge-clients/{clientId}/slots`
+- `POST /api/v1/edge-clients/{clientId}/slots`
+- `DELETE /api/v1/edge-clients/{clientId}/slots/{slotId}`
 - `POST /api/v1/edge-clients/{clientId}/target-slot-count`
 
 ---
@@ -45,7 +47,148 @@
 
 ---
 
-## 2. POST /api/v1/edge-clients/{clientId}/target-slot-count
+## 2. POST /api/v1/edge-clients/{clientId}/slots
+
+### 业务语义
+
+通过 Node Server 在目标 Client 上新增一个真实 slot。
+
+### 它负责什么
+
+- 校验 `slotId` 必须是 `slot001` 这类三位编号
+- 校验节点必须是 `healthy + verified`
+- 调用 Client `POST /api/v1/edge/slots`
+- 成功后重新读取 Client slots
+- 全量刷新 `edge_client_slots`
+- 把 `targetSlotCount` 同步为动作后的真实 `actualSlotCount`
+
+### 它不负责什么
+
+- 不批量扩容
+- 不自动生成 slotId
+- 不创建 Browser Env
+- 不触发 Browser Env run
+
+### 状态与前置条件
+
+- 允许：节点 `healthStatus=healthy` 且 `discoveryStatus=verified`
+- 拒绝：节点 `discovered/stale/offline/unhealthy/identity_changed`
+- 拒绝：`slotId` 不符合 `slot[0-9]{3}`
+- 拒绝：Client 已存在同名 slot
+
+### SSE 说明
+
+- 不使用 SSE
+- 原因：新增单个 slot 是短链路同步动作
+- 成功返回时表示 Client 已创建，且 Node slot 缓存已经刷新
+
+### 请求示例
+
+```bash
+curl -s -X POST "$SERVER_BASE/api/v1/edge-clients/$CLIENT_ID/slots" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "slotId": "slot004",
+    "source": "manual-admin-create-slot"
+  }' | jq
+```
+
+### 成功响应
+
+```json
+{
+  "code": 1000,
+  "message": "success",
+  "data": {
+    "clientId": "9060901190003",
+    "slotId": "slot004",
+    "action": "create_slot",
+    "result": "success",
+    "targetSlotCount": 4,
+    "actualSlotCount": 4,
+    "availableSlotCount": 4,
+    "runningSlotCount": 0,
+    "slotExceptionStatus": "normal",
+    "slotExceptionReason": "",
+    "updatedAt": 1782959000
+  }
+}
+```
+
+---
+
+## 3. DELETE /api/v1/edge-clients/{clientId}/slots/{slotId}
+
+### 业务语义
+
+通过 Node Server 删除目标 Client 上的一个真实 slot。
+
+### 它负责什么
+
+- 校验 `slotId` 必须是 `slot001` 这类三位编号
+- 校验节点必须是 `healthy + verified`
+- 调用 Client `DELETE /api/v1/edge/slots/{slotId}`
+- 默认 `force=false`，只删除 waiting slot
+- 成功后重新读取 Client slots
+- 全量刷新 `edge_client_slots`
+- 把 `targetSlotCount` 同步为动作后的真实 `actualSlotCount`
+
+### 它不负责什么
+
+- 不自动 stop Browser Env
+- 不删除 running slot 上挂载的账号环境
+- 不批量缩容
+- 不绕过 Client 的状态校验
+
+### 状态与前置条件
+
+- 允许：节点 `healthy + verified`
+- 允许：目标 slot 在 Client 上是 `waiting`
+- 拒绝：目标 slot 是 `loading/running/ending`
+- 拒绝：目标 slot 不存在
+
+### SSE 说明
+
+- 不使用 SSE
+- 原因：删除单个 waiting slot 是短链路同步动作
+- 成功返回时表示 Client 已删除，且 Node slot 缓存已经刷新
+
+### 请求示例
+
+```bash
+curl -s -X DELETE "$SERVER_BASE/api/v1/edge-clients/$CLIENT_ID/slots/slot004" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "force": false,
+    "source": "manual-admin-delete-slot"
+  }' | jq
+```
+
+### 成功响应
+
+```json
+{
+  "code": 1000,
+  "message": "success",
+  "data": {
+    "clientId": "9060901190003",
+    "slotId": "slot004",
+    "action": "delete_slot",
+    "result": "success",
+    "targetSlotCount": 3,
+    "actualSlotCount": 3,
+    "availableSlotCount": 3,
+    "runningSlotCount": 0,
+    "slotExceptionStatus": "normal",
+    "slotExceptionReason": "",
+    "updatedAt": 1782959300
+  }
+}
+```
+
+---
+
+## 4. POST /api/v1/edge-clients/{clientId}/target-slot-count
 
 ### 业务语义
 
@@ -78,10 +221,14 @@
 
 ---
 
-## 3. 两条接口的关系
+## 5. 接口关系
 
 - `GET /slots`
   - 看当前中心缓存结果
+- `POST /slots`
+  - 在 Client 创建真实 slot，并把目标数同步为新实际数
+- `DELETE /slots/{slotId}`
+  - 在 Client 删除真实 waiting slot，并把目标数同步为新实际数
 - `POST /target-slot-count`
   - 改当前中心目标值
 
@@ -95,5 +242,7 @@
   - 刷新实际 slot 事实
 - `target-slot-count`
   - 更新中心目标值
+- `POST /slots` / `DELETE /slots/{slotId}`
+  - 修改 Client 真实 slot 资源，并刷新中心缓存
 - `GET /slots`
   - 查询当前中心视图

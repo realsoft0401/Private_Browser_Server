@@ -23,6 +23,7 @@ func TestDocumentationEntrypoints(t *testing.T) {
 	}{
 		{name: "swagger", path: "/swagger", contains: "swagger-ui"},
 		{name: "scalar", path: "/scalar", contains: "@scalar/api-reference"},
+		{name: "admin", path: "/admin", contains: "Node Admin Demo"},
 		{name: "openapi", path: "/openapi.yaml", contains: "openapi: 3.0.3"},
 	}
 

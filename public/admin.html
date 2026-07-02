@@ -1,0 +1,1934 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <!--
+      Node Admin Demo 是当前阶段的临时内网运维原型。
+      它只调用 Node Server 正式 API，不绕过中心直接访问 Client；后续 Vue 管理台上线后应整体退场。
+      后续正式 Vue 管理台上线后，应删除本文件和 /admin 路由，避免形成第二套前端工程。
+    -->
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Private Browser Node Admin Demo</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #172033;
+        --muted: #667085;
+        --paper: rgba(255, 255, 255, 0.86);
+        --line: rgba(83, 96, 129, 0.18);
+        --blue: #2563eb;
+        --cyan: #0891b2;
+        --green: #16a34a;
+        --amber: #d97706;
+        --red: #dc2626;
+        --shadow: 0 24px 80px rgba(22, 32, 51, 0.14);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 8% 8%, rgba(37, 99, 235, 0.18), transparent 28%),
+          radial-gradient(circle at 92% 0%, rgba(8, 145, 178, 0.16), transparent 30%),
+          linear-gradient(135deg, #f8fafc 0%, #eef6ff 42%, #f7f3ea 100%);
+        font-family:
+          "Avenir Next",
+          "PingFang SC",
+          "Microsoft YaHei",
+          ui-sans-serif,
+          system-ui,
+          sans-serif;
+      }
+
+      .shell {
+        width: min(1480px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 28px 0 42px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.4fr 0.6fr;
+        gap: 18px;
+        align-items: stretch;
+        margin-bottom: 18px;
+      }
+
+      .hero-card,
+      .panel,
+      .metric {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        backdrop-filter: blur(18px);
+        box-shadow: var(--shadow);
+      }
+
+      .hero-card {
+        min-height: 220px;
+        border-radius: 32px;
+        padding: 30px;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .hero-card::after {
+        content: "";
+        position: absolute;
+        width: 300px;
+        height: 300px;
+        right: -90px;
+        top: -120px;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(37, 99, 235, 0.2), transparent 68%);
+      }
+
+      h1 {
+        position: relative;
+        z-index: 1;
+        margin: 0 0 12px;
+        font-size: clamp(34px, 5vw, 66px);
+        line-height: 0.96;
+        letter-spacing: -0.07em;
+      }
+
+      .subtitle {
+        position: relative;
+        z-index: 1;
+        max-width: 780px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.8;
+      }
+
+      .top-actions {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 22px;
+      }
+
+      a.button,
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 14px;
+        color: #fff;
+        background: #172033;
+        text-decoration: none;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      a.button.secondary,
+      button.secondary {
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.78);
+        border: 1px solid var(--line);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.48;
+      }
+
+      .status-card {
+        border-radius: 32px;
+        padding: 24px;
+      }
+
+      .status-label {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .status-main {
+        margin-top: 18px;
+        font-size: 36px;
+        font-weight: 900;
+        letter-spacing: -0.04em;
+      }
+
+      .status-meta {
+        margin-top: 12px;
+        color: var(--muted);
+        line-height: 1.7;
+        word-break: break-all;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 14px;
+        margin: 18px 0;
+      }
+
+      .module-nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 18px 0;
+      }
+
+      .module-nav button {
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid var(--line);
+      }
+
+      .module-nav button.active {
+        color: #fff;
+        background: var(--blue);
+      }
+
+      .metric {
+        border-radius: 24px;
+        padding: 18px;
+      }
+
+      .metric-value {
+        font-size: 34px;
+        font-weight: 900;
+        letter-spacing: -0.05em;
+      }
+
+      .metric-label {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 18px;
+      }
+
+      .panel {
+        border-radius: 28px;
+        overflow: hidden;
+      }
+
+      .panel.hidden {
+        display: none;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 18px 20px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .panel-title {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 900;
+        letter-spacing: -0.03em;
+      }
+
+      .panel-note {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .list {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+      }
+
+      .item {
+        border: 1px solid rgba(83, 96, 129, 0.14);
+        border-radius: 18px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.64);
+      }
+
+      .item.clickable {
+        cursor: pointer;
+        transition:
+          transform 160ms ease,
+          border-color 160ms ease,
+          background 160ms ease;
+      }
+
+      .item.clickable:hover {
+        transform: translateY(-2px);
+        border-color: rgba(37, 99, 235, 0.34);
+        background: rgba(255, 255, 255, 0.86);
+      }
+
+      .item-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+      }
+
+      .item-title {
+        font-weight: 900;
+        word-break: break-all;
+      }
+
+      .item-sub {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.55;
+        word-break: break-all;
+      }
+
+      .item-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .item-actions a {
+        border-radius: 999px;
+        padding: 8px 11px;
+        background: rgba(23, 32, 51, 0.92);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 900;
+        text-decoration: none;
+      }
+
+      .item-actions button {
+        border-radius: 999px;
+        padding: 8px 11px;
+        background: rgba(37, 99, 235, 0.92);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .item-actions select {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 8px 11px;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.82);
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 5px 9px;
+        font-size: 12px;
+        font-weight: 900;
+        white-space: nowrap;
+        background: rgba(37, 99, 235, 0.12);
+        color: var(--blue);
+      }
+
+      .badge.good {
+        background: rgba(22, 163, 74, 0.12);
+        color: var(--green);
+      }
+
+      .badge.warn {
+        background: rgba(217, 119, 6, 0.14);
+        color: var(--amber);
+      }
+
+      .badge.bad {
+        background: rgba(220, 38, 38, 0.12);
+        color: var(--red);
+      }
+
+      .empty,
+      .error {
+        padding: 22px;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .error {
+        color: var(--red);
+      }
+
+      .wide {
+        grid-column: 1 / -1;
+      }
+
+      .detail-body {
+        padding: 16px;
+      }
+
+      .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 10px;
+      }
+
+      .detail-cell {
+        border: 1px solid rgba(83, 96, 129, 0.14);
+        border-radius: 16px;
+        padding: 12px;
+        background: rgba(255, 255, 255, 0.62);
+      }
+
+      .detail-alert {
+        margin-bottom: 12px;
+        border: 1px solid rgba(217, 119, 6, 0.24);
+        border-radius: 18px;
+        padding: 13px 14px;
+        color: #92400e;
+        background: rgba(255, 251, 235, 0.82);
+        font-size: 13px;
+        font-weight: 800;
+        line-height: 1.7;
+      }
+
+      .detail-alert.good {
+        border-color: rgba(22, 163, 74, 0.22);
+        color: #166534;
+        background: rgba(240, 253, 244, 0.82);
+      }
+
+      .detail-alert.bad {
+        border-color: rgba(220, 38, 38, 0.2);
+        color: #991b1b;
+        background: rgba(254, 242, 242, 0.84);
+      }
+
+      .detail-key {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .detail-value {
+        margin-top: 6px;
+        font-size: 13px;
+        font-weight: 800;
+        line-height: 1.5;
+        word-break: break-all;
+      }
+
+      .json-block {
+        margin: 14px 0 0;
+        border: 1px solid rgba(83, 96, 129, 0.14);
+        border-radius: 16px;
+        padding: 14px;
+        overflow: auto;
+        background: rgba(23, 32, 51, 0.94);
+        color: #e2e8f0;
+        font-size: 12px;
+        line-height: 1.7;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 12px;
+        padding: 16px;
+      }
+
+      .form-field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .form-field label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .form-field input,
+      .form-field select,
+      .form-field textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 10px 12px;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.78);
+        font: inherit;
+      }
+
+      .form-field textarea {
+        min-height: 96px;
+        resize: vertical;
+      }
+
+      .form-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        padding: 0 16px 16px;
+      }
+
+      .form-message {
+        padding: 0 16px 16px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      .footer {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+
+      @media (max-width: 980px) {
+        .hero,
+        .grid,
+        .metrics {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-card {
+          min-height: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div class="hero-card">
+          <h1>Node Admin Demo</h1>
+          <p class="subtitle">
+            这是一个可退场的只读运维看板原型。它只调用 Node Server 现有 API，
+            用来观察节点发现、绑定、环境包、slot 和任务事实；少量生命周期动作也只走 Node Server 正式 API，
+            不直接绕过中心调用 Client。
+          </p>
+          <div class="top-actions">
+            <button id="refresh-button">刷新数据</button>
+            <a class="button secondary" href="/swagger" target="_blank">Swagger</a>
+            <a class="button secondary" href="/scalar" target="_blank">Scalar</a>
+            <a class="button secondary" href="/openapi.yaml" target="_blank">OpenAPI</a>
+          </div>
+        </div>
+        <div class="panel status-card">
+          <div class="status-label">Node Health</div>
+          <div class="status-main" id="health-status">loading</div>
+          <div class="status-meta" id="health-meta">正在读取 /health ...</div>
+        </div>
+      </section>
+
+      <section class="metrics">
+        <div class="metric">
+          <div class="metric-value" id="metric-discovered">-</div>
+          <div class="metric-label">Discovered Clients</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="metric-bound">-</div>
+          <div class="metric-label">Bound Clients</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="metric-slots">-</div>
+          <div class="metric-label">Slots waiting/total</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="metric-envs">-</div>
+          <div class="metric-label">Browser Envs</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="metric-tasks">-</div>
+          <div class="metric-label">Recent Tasks</div>
+        </div>
+      </section>
+
+      <section class="module-nav" aria-label="功能目录">
+        <button class="active" type="button" data-module-target="all">总览</button>
+        <button type="button" data-module-target="nodes">节点</button>
+        <button type="button" data-module-target="browser-envs">Browser Envs</button>
+        <button type="button" data-module-target="slots">Slots</button>
+        <button type="button" data-module-target="tasks">Tasks</button>
+      </section>
+
+      <section class="grid">
+        <div class="panel" data-module="nodes">
+          <div class="panel-head">
+            <h2 class="panel-title">Discovered</h2>
+            <span class="panel-note">UDP beacon 发现视图</span>
+          </div>
+          <div class="list" id="discovered-list"></div>
+        </div>
+
+        <div class="panel" data-module="nodes">
+          <div class="panel-head">
+            <h2 class="panel-title">Bound Clients</h2>
+            <span class="panel-note">点击卡片查看详情</span>
+          </div>
+          <div class="list" id="clients-list"></div>
+        </div>
+
+        <div class="panel wide" data-module="nodes">
+          <div class="panel-head">
+            <h2 class="panel-title">Node Detail</h2>
+            <span class="panel-note">只读中心节点详情</span>
+          </div>
+          <div class="detail-body" id="client-detail-body">
+            <div class="empty">点击 Bound Clients 里的某个节点卡片后，这里会显示详情。</div>
+          </div>
+        </div>
+
+        <div class="panel" data-module="browser-envs">
+          <div class="panel-head">
+            <h2 class="panel-title">Browser Envs</h2>
+            <span class="panel-note">点击卡片查看详情</span>
+          </div>
+          <div class="list" id="envs-list"></div>
+        </div>
+
+        <div class="panel wide" data-module="browser-envs">
+          <div class="panel-head">
+            <h2 class="panel-title">Browser Env Detail</h2>
+            <span class="panel-note">中心详情与受控生命周期动作</span>
+          </div>
+          <div class="detail-body" id="env-detail-body">
+            <div class="empty">点击 Browser Envs 里的某个环境包卡片后，这里会显示详情。</div>
+          </div>
+        </div>
+
+        <div class="panel wide" data-module="browser-envs">
+          <div class="panel-head">
+            <h2 class="panel-title">Create Browser Env</h2>
+            <span class="panel-note">同步创建，不自动 run</span>
+          </div>
+          <form id="create-env-form">
+            <div class="form-grid">
+              <div class="form-field">
+                <label for="create-client-id">clientId</label>
+                <select id="create-client-id" name="clientId" required></select>
+              </div>
+              <div class="form-field">
+                <label for="create-user-id">userId</label>
+                <input id="create-user-id" name="userId" value="906090001" required />
+              </div>
+              <div class="form-field">
+                <label for="create-rpa-type">rpaType</label>
+                <input id="create-rpa-type" name="rpaType" value="tk" required />
+              </div>
+              <div class="form-field">
+                <label for="create-name">name</label>
+                <input id="create-name" name="name" value="tk-main-account" required />
+              </div>
+              <div class="form-field">
+                <label for="create-image">runtime.image</label>
+                <input id="create-image" name="image" value="crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.2-amd64" required />
+              </div>
+              <div class="form-field">
+                <label for="create-startup-url">startupUrl</label>
+                <input id="create-startup-url" name="startupUrl" value="https://www.tiktok.com/" />
+              </div>
+              <div class="form-field">
+                <label for="create-shm-size">shmSize</label>
+                <input id="create-shm-size" name="shmSize" value="1g" />
+              </div>
+              <div class="form-field">
+                <label for="create-timezone">timezone</label>
+                <input id="create-timezone" name="timezone" value="America/New_York" />
+              </div>
+              <div class="form-field">
+                <label for="create-language">language</label>
+                <input id="create-language" name="language" value="us-en" />
+              </div>
+              <div class="form-field">
+                <label for="create-screen-width">screen.width</label>
+                <input id="create-screen-width" name="screenWidth" type="number" value="1280" min="1" />
+              </div>
+              <div class="form-field">
+                <label for="create-screen-height">screen.height</label>
+                <input id="create-screen-height" name="screenHeight" type="number" value="720" min="1" />
+              </div>
+              <div class="form-field">
+                <label for="create-screen-depth">screen.depth</label>
+                <input id="create-screen-depth" name="screenDepth" type="number" value="24" min="1" />
+              </div>
+              <div class="form-field">
+                <label for="create-proxy-type">proxy.type 当前固定 clash</label>
+                <select id="create-proxy-type" name="proxyType">
+                  <option value="clash" selected>clash</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label for="create-proxy-mode">proxy.mode</label>
+                <select id="create-proxy-mode" name="proxyMode">
+                  <option value="rule" selected>规则 rule</option>
+                  <option value="global">全局 global</option>
+                  <option value="direct">直连 direct</option>
+                </select>
+              </div>
+              <div class="form-field wide">
+                <label for="create-proxy-config">proxy.configBase64</label>
+                <textarea id="create-proxy-config" name="proxyConfigBase64" placeholder="必填，粘贴 base64 后的 Clash YAML；提交时会按 proxy.mode 修正顶层 mode"></textarea>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button type="submit">创建 Browser Env</button>
+              <button class="secondary" type="button" id="reset-create-env-form">恢复默认</button>
+            </div>
+            <div class="form-message" id="create-env-message">创建默认 proxy.enabled=true，proxy.type=clash；只写入环境包与中心缓存，不会自动 run，也不会占用 slot。</div>
+          </form>
+        </div>
+
+        <div class="panel" data-module="slots">
+          <div class="panel-head">
+            <h2 class="panel-title">Slots</h2>
+            <span class="panel-note">点击卡片查看缓存详情</span>
+          </div>
+          <form id="create-slot-form">
+            <div class="form-grid">
+              <div class="form-field">
+                <label for="create-slot-client-id">clientId</label>
+                <select id="create-slot-client-id" name="clientId" required></select>
+              </div>
+              <div class="form-field">
+                <label for="create-slot-id">slotId</label>
+                <input id="create-slot-id" name="slotId" placeholder="slot004" pattern="slot[0-9]{3}" required />
+              </div>
+            </div>
+            <div class="form-actions">
+              <button type="submit">新增 Slot</button>
+              <button class="secondary" type="button" id="suggest-next-slot">填入下一个编号</button>
+            </div>
+            <div class="form-message" id="create-slot-message">
+              新增和删除 slot 都只走 Node Server API；成功后会刷新 Client 真实 slot 并同步 targetSlotCount。
+            </div>
+          </form>
+          <div class="list" id="slots-list"></div>
+        </div>
+
+        <div class="panel wide" data-module="slots">
+          <div class="panel-head">
+            <h2 class="panel-title">Slot Detail</h2>
+            <span class="panel-note">只读 Node 缓存详情</span>
+          </div>
+          <div class="detail-body" id="slot-detail-body">
+            <div class="empty">点击 Slots 里的某个 slot 卡片后，这里会显示详情。</div>
+          </div>
+        </div>
+
+        <div class="panel" data-module="tasks">
+          <div class="panel-head">
+            <h2 class="panel-title">Server Tasks</h2>
+            <span class="panel-note">点击卡片查看详情</span>
+          </div>
+          <div class="list" id="tasks-list"></div>
+        </div>
+
+        <div class="panel wide" data-module="tasks">
+          <div class="panel-head">
+            <h2 class="panel-title">Task Detail</h2>
+            <span class="panel-note">只读中心任务详情</span>
+          </div>
+          <div class="detail-body" id="task-detail-body">
+            <div class="empty">点击 Server Tasks 里的某个任务卡片后，这里会显示详情。</div>
+          </div>
+        </div>
+
+        <div class="panel wide" data-module="all">
+          <div class="panel-head">
+            <h2 class="panel-title">运维边界</h2>
+            <span class="panel-note">Demo 边界</span>
+          </div>
+          <div class="empty">
+            普通 bind 前会检查 Client 本地 <code>node-registration.json</code>。
+            只要存在本地注册锁，普通 bind 必须拒绝。旧 Node 不可用时，
+            管理员手动删除 Client 本地 <code>/Business/data/node-registration.json</code> 后，
+            再由新 Node 发起普通 bind。当前不提供 force bind 接口。
+            Browser Env 的加载、卸载和备份只走 Node Server API，页面会先展示 run admission、slot 缓存和环境包状态，
+            禁止把“slot 容器是 running”误解成“环境包已经允许加载运行”。
+          </div>
+        </div>
+      </section>
+
+      <div class="footer" id="last-updated">尚未刷新</div>
+    </main>
+
+    <script>
+      const state = {
+        health: null,
+        discovered: [],
+        clients: [],
+        slots: [],
+        envs: [],
+        tasks: [],
+        selectedClientId: "",
+        selectedSlotKey: "",
+        selectedEnvId: "",
+        selectedTaskId: "",
+        activeTaskEventSource: null,
+        runQuotaByClientId: new Map()
+      };
+
+      const endpoints = {
+        health: "/health",
+        discovered: "/api/v1/edge-clients/discovered",
+        envs: "/api/v1/browser-envs?page=1&pageSize=50",
+        tasks: "/api/v1/server-tasks?page=1&pageSize=8"
+      };
+
+      document.getElementById("refresh-button").addEventListener("click", refresh);
+      document.getElementById("create-env-form").addEventListener("submit", createBrowserEnv);
+      document.getElementById("create-slot-form").addEventListener("submit", createSlot);
+      document.getElementById("reset-create-env-form").addEventListener("click", resetCreateEnvForm);
+      document.getElementById("suggest-next-slot").addEventListener("click", suggestNextSlotID);
+      document.getElementById("create-slot-client-id").addEventListener("change", suggestNextSlotID);
+      document.addEventListener("click", handleActionClick);
+      window.addEventListener("load", refresh);
+
+      async function requestJSON(url, options = {}) {
+        const response = await fetch(url, {
+          method: options.method || "GET",
+          headers: {
+            Accept: "application/json",
+            ...(options.body ? { "Content-Type": "application/json" } : {})
+          },
+          cache: "no-store",
+          body: options.body
+        });
+        if (!response.ok) {
+          throw new Error(`${url} HTTP ${response.status}`);
+        }
+        const payload = await response.json();
+        if (payload.code !== 1000) {
+          throw new Error(payload.message || `${url} returned code ${payload.code}`);
+        }
+        return payload.data;
+      }
+
+      async function refresh() {
+        setLoading();
+        const firstResults = await Promise.allSettled([
+          requestJSON(endpoints.health),
+          requestJSON(endpoints.discovered),
+          requestJSON(endpoints.envs),
+          requestJSON(endpoints.tasks)
+        ]);
+
+        const [health, discovered, envs, tasks] = firstResults;
+        state.health = valueOrNull(health);
+        state.discovered = itemsOf(valueOrNull(discovered));
+        state.envs = itemsOf(valueOrNull(envs));
+        state.tasks = itemsOf(valueOrNull(tasks));
+
+        const accountId = resolveAccountId();
+        const clients = accountId
+          ? await Promise.allSettled([
+              requestJSON(`/api/v1/edge-clients?accountId=${encodeURIComponent(accountId)}&page=1&pageSize=50`)
+            ])
+          : [{ status: "rejected", reason: new Error("缺少 accountId，无法读取 bound clients") }];
+        state.clients = itemsOf(valueOrNull(clients[0]));
+
+        const slotResults = state.clients.length
+          ? await Promise.allSettled(
+              state.clients.map((client) => requestJSON(`/api/v1/edge-clients/${encodeURIComponent(client.clientId)}/slots`))
+            )
+          : [];
+        const clientById = new Map(state.clients.map((client) => [client.clientId, client]));
+        state.slots = slotResults.flatMap((result) => {
+          const data = valueOrNull(result);
+          const clientId = data?.clientId || "";
+          return itemsOf(data).map((slot) => {
+            const slotClientId = slot.clientId || clientId;
+            return {
+              ...slot,
+              clientId: slotClientId,
+              clientBaseUrl: clientById.get(slotClientId)?.baseUrl || ""
+            };
+          });
+        });
+
+        renderHealth(health);
+        renderMetrics();
+        renderList("discovered-list", state.discovered, renderDiscovered);
+        renderList("clients-list", state.clients, renderClient);
+        renderList("slots-list", state.slots, renderSlot);
+        renderList("envs-list", state.envs, renderEnv);
+        renderList("tasks-list", state.tasks, renderTask);
+        renderClientSelect();
+        renderSlotClientSelect();
+
+        const allResults = [...firstResults, ...clients, ...slotResults];
+        document.getElementById("last-updated").textContent =
+          `最后刷新：${new Date().toLocaleString()}，accountId：${accountId || "-"}，失败接口：${failedCount(allResults)} 个`;
+      }
+
+      function setLoading() {
+        for (const id of [
+          "discovered-list",
+          "clients-list",
+          "slots-list",
+          "envs-list",
+          "tasks-list"
+        ]) {
+          document.getElementById(id).innerHTML = '<div class="empty">加载中...</div>';
+        }
+      }
+
+      function valueOrNull(result) {
+        return result.status === "fulfilled" ? result.value : null;
+      }
+
+      function failedCount(results) {
+        return results.filter((result) => result.status === "rejected").length;
+      }
+
+      function itemsOf(data) {
+        if (!data) return [];
+        if (Array.isArray(data.items)) return data.items;
+        return [];
+      }
+
+      function resolveAccountId() {
+        const params = new URLSearchParams(window.location.search);
+        const explicit = params.get("accountId");
+        if (explicit) return explicit;
+        const discoveredAccount = state.discovered.find((item) => item.accountId)?.accountId;
+        if (discoveredAccount) return discoveredAccount;
+        return state.envs.find((item) => item.accountId)?.accountId || "";
+      }
+
+      function renderHealth(result) {
+        const status = document.getElementById("health-status");
+        const meta = document.getElementById("health-meta");
+        if (result.status === "rejected") {
+          status.textContent = "unreachable";
+          status.style.color = "var(--red)";
+          meta.textContent = result.reason.message;
+          return;
+        }
+        const data = result.value;
+        status.textContent = data.status || "unknown";
+        status.style.color = data.status === "healthy" ? "var(--green)" : "var(--amber)";
+        meta.textContent = `${data.service || "server"} · ${data.version || "-"} · ${data.configFile || ""}`;
+      }
+
+      function renderMetrics() {
+        document.getElementById("metric-discovered").textContent = state.discovered.length;
+        document.getElementById("metric-bound").textContent = state.clients.length;
+        const waitingSlots = state.slots.filter((slot) => slot.status === "waiting").length;
+        document.getElementById("metric-slots").textContent = `${waitingSlots}/${state.slots.length}`;
+        document.getElementById("metric-envs").textContent = state.envs.length;
+        document.getElementById("metric-tasks").textContent = state.tasks.length;
+      }
+
+      function renderList(id, items, renderer) {
+        const target = document.getElementById(id);
+        if (!items.length) {
+          target.innerHTML = '<div class="empty">暂无数据</div>';
+          return;
+        }
+        target.innerHTML = items.map(renderer).join("");
+      }
+
+      function renderClientSelect() {
+        const select = document.getElementById("create-client-id");
+        const currentValue = select.value;
+        if (!state.clients.length) {
+          select.innerHTML = '<option value="">暂无可用 Client</option>';
+          return;
+        }
+        select.innerHTML = state.clients.map((client) => {
+          const label = `${client.clientId} · ${client.healthStatus}/${client.discoveryStatus} · ${client.baseUrl}`;
+          return `<option value="${escapeHTML(client.clientId)}">${escapeHTML(label)}</option>`;
+        }).join("");
+        if (currentValue && state.clients.some((client) => client.clientId === currentValue)) {
+          select.value = currentValue;
+        }
+      }
+
+      function renderSlotClientSelect() {
+        const select = document.getElementById("create-slot-client-id");
+        const currentValue = select.value;
+        if (!state.clients.length) {
+          select.innerHTML = '<option value="">暂无可用 Client</option>';
+          return;
+        }
+        select.innerHTML = state.clients.map((client) => {
+          const label = `${client.clientId} · slots ${client.actualSlotCount ?? 0}/${client.targetSlotCount ?? 0} · ${client.baseUrl}`;
+          return `<option value="${escapeHTML(client.clientId)}">${escapeHTML(label)}</option>`;
+        }).join("");
+        if (currentValue && state.clients.some((client) => client.clientId === currentValue)) {
+          select.value = currentValue;
+        }
+        suggestNextSlotID();
+      }
+
+      function renderDiscovered(item) {
+        const lockedHint = item.clientId
+          ? "已匹配中心绑定"
+          : "未绑定；普通 bind 仍会检查 Client 本地注册锁";
+        return card({
+          title: item.baseUrl || item.clientIp || item.discoveryId,
+          badge: item.healthStatus || item.status || "discovered",
+          tone: item.healthStatus === "healthy" ? "good" : "warn",
+          lines: [
+            `clientId: ${item.clientId || "-"}`,
+            `accountId: ${item.accountId || "-"}`,
+            `host: ${item.hostname || "-"} · ${item.os || "-"} / ${item.arch || "-"}`,
+            `docker: ${item.dockerVersion || "-"} · ${item.dockerApiUrl || "-"}`,
+            lockedHint
+          ]
+        });
+      }
+
+      function renderClient(item) {
+        return card({
+          title: item.clientId || item.name || item.clientIp,
+          badge: `${item.healthStatus || "unknown"} / ${item.discoveryStatus || "unknown"}`,
+          tone: item.healthStatus === "healthy" && item.discoveryStatus === "verified" ? "good" : "warn",
+          lines: [
+            `accountId: ${item.accountId || "-"}`,
+            `baseUrl: ${item.baseUrl || "-"}`,
+            `slots: target ${item.targetSlotCount ?? "-"} · actual ${item.actualSlotCount ?? "-"} · available ${item.availableSlotCount ?? "-"}`,
+            `slotException: ${item.slotExceptionStatus || "-"} ${item.slotExceptionReason || ""}`,
+            `lastSlotCheckedAt: ${formatUnix(item.lastSlotCheckedAt)}`,
+            `lastHeartbeatAt: ${formatUnix(item.lastHeartbeatAt)}`
+          ],
+          actions: item.clientId ? [actionButton("刷新 Slot 缓存", "slot-reconcile", item.clientId)] : [],
+          className: "clickable",
+          attrs: {
+            "data-action": "client-detail",
+            "data-client-id": item.clientId || ""
+          }
+        });
+      }
+
+      function renderEnv(item) {
+        return card({
+          title: item.envId || item.name,
+          badge: item.status || "unknown",
+          tone: item.status === "running" ? "good" : item.status === "error" ? "bad" : "warn",
+          lines: [
+            `clientId: ${item.clientId || "-"}`,
+            `userId/rpaType: ${item.userId || "-"} / ${item.rpaType || "-"}`,
+            `runtime: ${item.runtimeStatus || "-"} · container: ${item.containerStatus || "-"}`,
+            `slot: ${item.currentSlotId || "-"}`,
+            `webVnc: ${item.webVncUrl || "-"}`
+          ],
+          className: "clickable",
+          attrs: {
+            "data-action": "env-detail",
+            "data-env-id": item.envId || ""
+          }
+        });
+      }
+
+      function renderSlot(item) {
+        const status = item.status || "unknown";
+        const webVncUrl = buildWebVncUrl(item.clientBaseUrl, item.slotId);
+        const actions = [];
+        if (webVncUrl) {
+          actions.push(actionLink(webVncUrl, "打开 WebVNC"));
+        }
+        actions.push(actionButtonWithAttrs("删除 Slot", {
+          "data-action": "delete-slot",
+          "data-client-id": item.clientId || "",
+          "data-slot-id": item.slotId || "",
+          disabled: status === "waiting" ? null : "disabled"
+        }));
+        return card({
+          title: `${item.clientId || "-"} / ${item.slotId || "-"}`,
+          badge: status,
+          tone: status === "waiting" ? "good" : status === "running" ? "warn" : status === "ending" ? "bad" : "warn",
+          lines: [
+            `currentEnvId: ${item.currentEnvId || "-"}`,
+            `currentRunId: ${item.currentRunId || "-"}`,
+            `container: ${item.containerName || "-"} / ${item.containerId || "-"}`,
+            `ports: cdp ${item.cdpPort || "-"} · vnc ${item.vncPort || "-"}`,
+            `lastSyncedAt: ${formatUnix(item.lastSyncedAt)}`,
+            `lastError: ${item.lastError || "-"}`
+          ],
+          actions,
+          className: "clickable",
+          attrs: {
+            "data-action": "slot-detail",
+            "data-client-id": item.clientId || "",
+            "data-slot-id": item.slotId || ""
+          }
+        });
+      }
+
+      function renderTask(item) {
+        return card({
+          title: item.taskId || item.resourceId,
+          badge: item.status || "unknown",
+          tone: item.status === "success" ? "good" : item.status === "failed" ? "bad" : "warn",
+          lines: [
+            `type: ${item.taskType || "-"}`,
+            `resource: ${item.resourceType || "-"} / ${item.resourceId || "-"}`,
+            `clientId: ${item.clientId || "-"}`,
+            `envId: ${item.envId || "-"}`,
+            `message: ${item.message || item.errorMessage || "-"}`
+          ],
+          className: "clickable",
+          attrs: {
+            "data-action": "task-detail",
+            "data-task-id": item.taskId || ""
+          }
+        });
+      }
+
+      function card({ title, badge, tone, lines, actions = [], className = "", attrs = {} }) {
+        return `
+          <article class="item ${escapeHTML(className)}" ${renderAttrs(attrs)}>
+            <div class="item-top">
+              <div class="item-title">${escapeHTML(title || "-")}</div>
+              <span class="badge ${tone || ""}">${escapeHTML(badge || "-")}</span>
+            </div>
+            <div class="item-sub">${lines.map(escapeHTML).join("<br />")}</div>
+            ${actions.length ? `<div class="item-actions">${actions.join("")}</div>` : ""}
+          </article>
+        `;
+      }
+
+      function renderAttrs(attrs) {
+        return Object.entries(attrs)
+          .filter(([, value]) => value !== undefined && value !== null && value !== "")
+          .map(([key, value]) => `${escapeHTML(key)}="${escapeHTML(value)}"`)
+          .join(" ");
+      }
+
+      function buildWebVncUrl(baseUrl, slotId) {
+        if (!baseUrl || !slotId) return "";
+        return `${String(baseUrl).replace(/\/+$/, "")}/web-vnc.html?slot=${encodeURIComponent(slotId)}`;
+      }
+
+      function actionLink(url, label) {
+        return `<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(label)}</a>`;
+      }
+
+      function actionButton(label, action, clientId) {
+        return `<button type="button" data-action="${escapeHTML(action)}" data-client-id="${escapeHTML(clientId)}">${escapeHTML(label)}</button>`;
+      }
+
+      function actionButtonWithAttrs(label, attrs) {
+        return `<button type="button" ${renderAttrs(attrs)}>${escapeHTML(label)}</button>`;
+      }
+
+      async function handleActionClick(event) {
+        const moduleButton = event.target.closest("[data-module-target]");
+        if (moduleButton) {
+          applyModuleFilter(moduleButton.dataset.moduleTarget || "all");
+          return;
+        }
+
+        const button = event.target.closest("button[data-action]");
+        if (button) {
+          const action = button.dataset.action;
+          const clientId = button.dataset.clientId;
+          if (action === "slot-reconcile" && clientId) {
+            await reconcileSlots(button, clientId);
+          }
+          if (action === "run-env" && button.dataset.envId) {
+            await runBrowserEnv(button, button.dataset.envId, button.dataset.clientId || "");
+          }
+          if (action === "stop-env" && button.dataset.envId) {
+            await stopBrowserEnv(button, button.dataset.envId, button.dataset.clientId || "");
+          }
+          if (action === "backup-env" && button.dataset.envId) {
+            await backupBrowserEnv(button, button.dataset.envId);
+          }
+          if (action === "delete-env-package" && button.dataset.envId) {
+            await deleteBrowserEnvPackage(button, button.dataset.envId);
+          }
+          if (action === "delete-env-image" && button.dataset.envId) {
+            await deleteBrowserEnvImage(button, button.dataset.envId);
+          }
+          if (action === "delete-slot" && button.dataset.clientId && button.dataset.slotId) {
+            await deleteSlot(button, button.dataset.clientId, button.dataset.slotId);
+          }
+          return;
+        }
+
+        if (event.target.closest("a")) {
+          return;
+        }
+
+        const envCard = event.target.closest('[data-action="env-detail"]');
+        if (envCard?.dataset.envId) {
+          await loadEnvDetail(envCard.dataset.envId);
+          return;
+        }
+
+        const clientCard = event.target.closest('[data-action="client-detail"]');
+        if (clientCard?.dataset.clientId) {
+          await loadClientDetail(clientCard.dataset.clientId);
+          return;
+        }
+
+        const slotCard = event.target.closest('[data-action="slot-detail"]');
+        if (slotCard?.dataset.clientId && slotCard?.dataset.slotId) {
+          toggleSlotDetail(slotCard.dataset.clientId, slotCard.dataset.slotId);
+          return;
+        }
+
+        const taskCard = event.target.closest('[data-action="task-detail"]');
+        if (taskCard?.dataset.taskId) {
+          await loadTaskDetail(taskCard.dataset.taskId);
+        }
+      }
+
+      async function reconcileSlots(button, clientId) {
+        button.disabled = true;
+        button.textContent = "刷新中...";
+        try {
+          await requestJSON(`/api/v1/edge-clients/${encodeURIComponent(clientId)}/slot-reconcile`, {
+            method: "POST",
+            body: JSON.stringify({ source: "admin-demo-refresh-slots" })
+          });
+          document.getElementById("last-updated").textContent =
+            `Slot 缓存刷新任务已提交：${clientId}，正在重新读取缓存...`;
+          setTimeout(refresh, 900);
+        } catch (error) {
+          document.getElementById("last-updated").textContent =
+            `Slot 缓存刷新失败：${error.message}`;
+          button.disabled = false;
+          button.textContent = "刷新 Slot 缓存";
+        }
+      }
+
+      async function backupBrowserEnv(button, envId) {
+        button.disabled = true;
+        button.textContent = "备份中...";
+        const taskTarget = document.getElementById("task-detail-body");
+        taskTarget.innerHTML = `<div class="empty">正在提交 backup 任务：${escapeHTML(envId)} ...</div>`;
+        try {
+          const accepted = await requestJSON(`/api/v1/browser-envs/${encodeURIComponent(envId)}/backup`, {
+            method: "POST"
+          });
+          state.selectedTaskId = accepted.taskId || "";
+          taskTarget.innerHTML = renderTaskAcceptedDetail(accepted, "backup 已接单，等待 SSE 终态...");
+          startTaskEventStream(accepted);
+          document.getElementById("last-updated").textContent =
+            `backup 任务已提交：${accepted.taskId || "-"}，请观察 Task Detail。`;
+          setTimeout(refresh, 900);
+        } catch (error) {
+          taskTarget.innerHTML = `<div class="error">提交 backup 失败：${escapeHTML(error.message)}</div>`;
+          button.disabled = false;
+          button.textContent = "备份 Browser Env";
+        }
+      }
+
+      async function deleteBrowserEnvPackage(button, envId) {
+        const confirmed = window.confirm(
+          `确认彻底删除环境包 ${envId} 吗？\n\n` +
+          "这会删除 Edge 环境包资产和中心缓存记录，登录态也会随 package delete 被销毁。\n" +
+          "如果只是想清理运行镜像，请取消后使用“删除运行镜像”。"
+        );
+        if (!confirmed) return;
+
+        const taskTarget = document.getElementById("task-detail-body");
+        button.disabled = true;
+        button.textContent = "删除中...";
+        taskTarget.innerHTML = `<div class="empty">正在提交 package delete 任务：${escapeHTML(envId)} ...</div>`;
+        try {
+          const accepted = await requestJSON(`/api/v1/browser-envs/${encodeURIComponent(envId)}/package`, {
+            method: "DELETE"
+          });
+          state.selectedTaskId = accepted.taskId || "";
+          taskTarget.innerHTML = renderTaskAcceptedDetail(accepted, "package delete 已接单，等待 SSE 终态...");
+          startTaskEventStream(accepted, async (eventName) => {
+            if (eventName === "task.completed") {
+              state.selectedEnvId = "";
+              document.getElementById("env-detail-body").innerHTML =
+                '<div class="empty">环境包已删除。点击 Browser Envs 里的其它环境包卡片后，这里会显示详情。</div>';
+            }
+          });
+          document.getElementById("last-updated").textContent =
+            `package delete 任务已提交：${accepted.taskId || "-"}，请观察 Task Detail。`;
+          setTimeout(refresh, 900);
+        } catch (error) {
+          taskTarget.innerHTML = `<div class="error">提交 package delete 失败：${escapeHTML(error.message)}</div>`;
+          button.disabled = false;
+          button.textContent = "删除环境包资产";
+        }
+      }
+
+      async function deleteBrowserEnvImage(button, envId) {
+        const confirmed = window.confirm(
+          `确认删除 ${envId} 对应的运行镜像吗？\n\n` +
+          "这个动作只清理镜像，不删除环境包资产、不删除登录态、不移除 Browser Env 记录。"
+        );
+        if (!confirmed) return;
+
+        const taskTarget = document.getElementById("task-detail-body");
+        button.disabled = true;
+        button.textContent = "清理中...";
+        taskTarget.innerHTML = `<div class="empty">正在执行 /del 镜像清理：${escapeHTML(envId)} ...</div>`;
+        try {
+          const result = await requestJSON(`/api/v1/browser-envs/${encodeURIComponent(envId)}/del`, {
+            method: "DELETE"
+          });
+          taskTarget.innerHTML = renderObjectDetail(result, [
+            "envId",
+            "image",
+            "imageRemoved",
+            "warningMessage",
+            "deletedAt"
+          ]);
+          await refresh();
+          if (state.selectedEnvId === envId) {
+            state.selectedEnvId = "";
+            await loadEnvDetail(envId);
+          }
+          document.getElementById("last-updated").textContent =
+            `运行镜像清理完成：${envId}`;
+        } catch (error) {
+          taskTarget.innerHTML = `<div class="error">删除运行镜像失败：${escapeHTML(error.message)}</div>`;
+          button.disabled = false;
+          button.textContent = "删除运行镜像";
+        }
+      }
+
+      async function runBrowserEnv(button, envId, clientId) {
+        const slotId = document.getElementById("env-run-slot-select")?.value || "";
+        const taskTarget = document.getElementById("task-detail-body");
+        if (!slotId) {
+          taskTarget.innerHTML = '<div class="error">加载失败：请先选择一个 slot。</div>';
+          return;
+        }
+        const envStatus = button.dataset.envStatus || "";
+        const admissionAllowed = button.dataset.admissionAllowed || "";
+        if (!["created", "stopped"].includes(envStatus)) {
+          taskTarget.innerHTML =
+            `<div class="error">加载被拦截：当前环境包状态是 ${escapeHTML(envStatus || "-")}，只有 created/stopped 才能加载到 slot。</div>`;
+          return;
+        }
+        if (admissionAllowed === "false") {
+          taskTarget.innerHTML =
+            '<div class="error">加载被拦截：Node run admission 当前不允许 run，请先处理详情里的阻塞原因。</div>';
+          return;
+        }
+        button.disabled = true;
+        button.textContent = "加载中...";
+        taskTarget.innerHTML = `<div class="empty">正在提交 run 任务：${escapeHTML(envId)} -> ${escapeHTML(slotId)} ...</div>`;
+        try {
+          const accepted = await requestJSON(`/api/v1/browser-envs/${encodeURIComponent(envId)}/run`, {
+            method: "POST",
+            body: JSON.stringify({ slotId, forceRecreate: false })
+          });
+          state.selectedTaskId = accepted.taskId || "";
+          taskTarget.innerHTML = renderTaskAcceptedDetail(accepted, "run 已接单，等待 SSE 终态...");
+          startTaskEventStream(accepted, () => reconcileClientSlots(clientId));
+          document.getElementById("last-updated").textContent =
+            `run 任务已提交：${accepted.taskId || "-"}，请观察 Task Detail。`;
+          setTimeout(refresh, 900);
+        } catch (error) {
+          taskTarget.innerHTML = `<div class="error">提交 run 失败：${escapeHTML(error.message)}</div>`;
+          button.disabled = false;
+          button.textContent = "加载到 Slot";
+        }
+      }
+
+      async function stopBrowserEnv(button, envId, clientId) {
+        const taskTarget = document.getElementById("task-detail-body");
+        button.disabled = true;
+        button.textContent = "卸载中...";
+        taskTarget.innerHTML = `<div class="empty">正在卸载配置并恢复 slot 默认态：${escapeHTML(envId)} ...</div>`;
+        try {
+          const result = await requestJSON(`/api/v1/browser-envs/${encodeURIComponent(envId)}/stop`, {
+            method: "POST",
+            body: JSON.stringify({ timeoutSeconds: 10 })
+          });
+          taskTarget.innerHTML = renderObjectDetail(result, ["envId", "status", "containerStatus", "stoppedAt"]);
+          if (clientId) {
+            await reconcileClientSlots(clientId);
+          }
+          await refresh();
+          await loadEnvDetail(envId);
+          document.getElementById("last-updated").textContent =
+            `卸载完成：${envId}，slot 缓存已刷新。`;
+        } catch (error) {
+          taskTarget.innerHTML = `<div class="error">卸载失败：${escapeHTML(error.message)}</div>`;
+          button.disabled = false;
+          button.textContent = "卸载配置并恢复 Slot 默认态";
+        }
+      }
+
+      async function reconcileClientSlots(clientId) {
+        if (!clientId) return;
+        try {
+          await requestJSON(`/api/v1/edge-clients/${encodeURIComponent(clientId)}/slot-reconcile`, {
+            method: "POST",
+            body: JSON.stringify({ source: "admin-demo-refresh-after-env-lifecycle" })
+          });
+        } catch {
+          // Slot 对账失败不覆盖主生命周期结果；页面下次刷新仍可手动点“刷新 Slot 缓存”。
+        }
+      }
+
+      async function createSlot(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const submitButton = form.querySelector('button[type="submit"]');
+        const message = document.getElementById("create-slot-message");
+        const formData = new FormData(form);
+        const clientId = String(formData.get("clientId") || "").trim();
+        const slotId = String(formData.get("slotId") || "").trim();
+        if (!clientId || !/^slot[0-9]{3}$/.test(slotId)) {
+          message.textContent = "新增失败：clientId 必填，slotId 必须是 slot001 这类三位编号。";
+          return;
+        }
+        submitButton.disabled = true;
+        message.textContent = `正在新增 ${slotId} ...`;
+        try {
+          const result = await requestJSON(`/api/v1/edge-clients/${encodeURIComponent(clientId)}/slots`, {
+            method: "POST",
+            body: JSON.stringify({ slotId, source: "admin-demo-create-slot" })
+          });
+          message.textContent =
+            `新增成功：${result.slotId}，当前 slots ${result.actualSlotCount}/${result.targetSlotCount}，正在刷新页面...`;
+          await refresh();
+          applyModuleFilter("slots");
+        } catch (error) {
+          message.textContent = `新增失败：${error.message}`;
+        } finally {
+          submitButton.disabled = false;
+        }
+      }
+
+      async function deleteSlot(button, clientId, slotId) {
+        const taskTarget = document.getElementById("slot-detail-body");
+        const slot = state.slots.find((item) => item.clientId === clientId && item.slotId === slotId);
+        if (slot && slot.status !== "waiting") {
+          taskTarget.innerHTML = `<div class="error">删除被拦截：${escapeHTML(slotId)} 当前状态是 ${escapeHTML(slot.status || "-")}，只有 waiting slot 可以删除。</div>`;
+          return;
+        }
+        const confirmed = window.confirm(`确认删除 ${slotId} 吗？只允许删除 waiting slot，成功后 targetSlotCount 会同步为新的实际数量。`);
+        if (!confirmed) return;
+
+        button.disabled = true;
+        button.textContent = "删除中...";
+        taskTarget.innerHTML = `<div class="empty">正在删除 ${escapeHTML(slotId)} 并刷新 Node slot 缓存...</div>`;
+        try {
+          const result = await requestJSON(`/api/v1/edge-clients/${encodeURIComponent(clientId)}/slots/${encodeURIComponent(slotId)}`, {
+            method: "DELETE",
+            body: JSON.stringify({ force: false, source: "admin-demo-delete-slot" })
+          });
+          taskTarget.innerHTML = renderObjectDetail(result, [
+            "clientId",
+            "slotId",
+            "action",
+            "result",
+            "targetSlotCount",
+            "actualSlotCount",
+            "availableSlotCount",
+            "runningSlotCount",
+            "slotExceptionStatus",
+            "slotExceptionReason",
+            "updatedAt"
+          ]);
+          await refresh();
+          applyModuleFilter("slots");
+        } catch (error) {
+          taskTarget.innerHTML = `<div class="error">删除失败：${escapeHTML(error.message)}</div>`;
+          button.disabled = false;
+          button.textContent = "删除 Slot";
+        }
+      }
+
+      function suggestNextSlotID() {
+        const input = document.getElementById("create-slot-id");
+        const select = document.getElementById("create-slot-client-id");
+        if (!input || !select || !select.value) return;
+        const usedNumbers = state.slots
+          .filter((slot) => slot.clientId === select.value)
+          .map((slot) => /^slot([0-9]{3})$/.exec(slot.slotId || ""))
+          .filter(Boolean)
+          .map((match) => Number(match[1]));
+        let next = 1;
+        while (usedNumbers.includes(next)) next++;
+        input.value = `slot${String(next).padStart(3, "0")}`;
+      }
+
+      function applyModuleFilter(moduleName) {
+        document.querySelectorAll("[data-module-target]").forEach((button) => {
+          button.classList.toggle("active", button.dataset.moduleTarget === moduleName);
+        });
+        document.querySelectorAll("[data-module]").forEach((panel) => {
+          const panelModule = panel.dataset.module;
+          const visible = moduleName === "all" || panelModule === moduleName || panelModule === "all";
+          panel.classList.toggle("hidden", !visible);
+        });
+      }
+
+      async function createBrowserEnv(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const submitButton = form.querySelector('button[type="submit"]');
+        const message = document.getElementById("create-env-message");
+        const formData = new FormData(form);
+        const proxyMode = String(formData.get("proxyMode") || "rule").trim();
+        const rawProxyConfigBase64 = String(formData.get("proxyConfigBase64") || "").trim();
+        if (!rawProxyConfigBase64) {
+          message.textContent = "创建失败：proxy.configBase64 必填。";
+          return;
+        }
+        let proxyConfigBase64 = "";
+        try {
+          proxyConfigBase64 = rewriteClashModeBase64(rawProxyConfigBase64, proxyMode);
+        } catch (error) {
+          message.textContent = `创建失败：${error.message}`;
+          return;
+        }
+        const payload = {
+          clientId: String(formData.get("clientId") || "").trim(),
+          userId: String(formData.get("userId") || "").trim(),
+          rpaType: String(formData.get("rpaType") || "").trim(),
+          name: String(formData.get("name") || "").trim(),
+          runtime: {
+            image: String(formData.get("image") || "").trim(),
+            startupUrl: String(formData.get("startupUrl") || "").trim(),
+            shmSize: String(formData.get("shmSize") || "").trim()
+          },
+          environment: {
+            timezone: String(formData.get("timezone") || "").trim(),
+            language: String(formData.get("language") || "").trim(),
+            screen: {
+              width: Number(formData.get("screenWidth") || 1280),
+              height: Number(formData.get("screenHeight") || 720),
+              depth: Number(formData.get("screenDepth") || 24)
+            }
+          },
+          proxy: {
+            enabled: true,
+            type: "clash",
+            configBase64: proxyConfigBase64
+          }
+        };
+
+        if (!payload.clientId || !payload.userId || !payload.rpaType || !payload.runtime.image) {
+          message.textContent = "创建失败：clientId / userId / rpaType / runtime.image 不能为空。";
+          return;
+        }
+
+        submitButton.disabled = true;
+        message.textContent = "正在创建 Browser Env...";
+        try {
+          const created = await requestJSON("/api/v1/browser-envs", {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+          message.textContent = `创建成功：${created.envId}，正在刷新列表...`;
+          await refresh();
+          applyModuleFilter("browser-envs");
+          if (created.envId) {
+            await loadEnvDetail(created.envId);
+          }
+        } catch (error) {
+          message.textContent = `创建失败：${error.message}`;
+        } finally {
+          submitButton.disabled = false;
+        }
+      }
+
+      function resetCreateEnvForm() {
+        const form = document.getElementById("create-env-form");
+        form.reset();
+        renderClientSelect();
+        document.getElementById("create-env-message").textContent =
+          "创建默认 proxy.enabled=true，proxy.type=clash；只写入环境包与中心缓存，不会自动 run，也不会占用 slot。";
+      }
+
+      function rewriteClashModeBase64(configBase64, mode) {
+        if (!["rule", "global", "direct"].includes(mode)) {
+          throw new Error("proxy.mode 仅支持 rule/global/direct。");
+        }
+        const config = decodeBase64Text(configBase64);
+        if (!config.trim()) {
+          throw new Error("proxy.configBase64 解码后为空。");
+        }
+        const lines = config.split(/\r?\n/);
+        let replaced = false;
+        const nextLines = lines.map((line) => {
+          if (/^\s*mode\s*:/.test(line)) {
+            replaced = true;
+            return `mode: ${mode}`;
+          }
+          return line;
+        });
+        if (!replaced) {
+          nextLines.unshift(`mode: ${mode}`);
+        }
+        return encodeBase64Text(nextLines.join("\n"));
+      }
+
+      function decodeBase64Text(value) {
+        try {
+          const binary = atob(value.replace(/\s+/g, ""));
+          const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+          return new TextDecoder().decode(bytes);
+        } catch (error) {
+          throw new Error("proxy.configBase64 不是有效 Base64。");
+        }
+      }
+
+      function encodeBase64Text(value) {
+        const bytes = new TextEncoder().encode(value);
+        let binary = "";
+        for (const byte of bytes) {
+          binary += String.fromCharCode(byte);
+        }
+        return btoa(binary);
+      }
+
+      async function loadEnvDetail(envId) {
+        const target = document.getElementById("env-detail-body");
+        if (state.selectedEnvId === envId) {
+          state.selectedEnvId = "";
+          target.innerHTML = '<div class="empty">点击 Browser Envs 里的某个环境包卡片后，这里会显示详情。</div>';
+          return;
+        }
+
+        state.selectedEnvId = envId;
+        target.innerHTML = `<div class="empty">正在读取 ${escapeHTML(envId)} ...</div>`;
+        try {
+          const detail = await requestJSON(`/api/v1/browser-envs/${encodeURIComponent(envId)}`);
+          let runQuota = null;
+          if (detail.clientId) {
+            try {
+              runQuota = await requestJSON(`/api/v1/edge-clients/${encodeURIComponent(detail.clientId)}/run-quota`);
+              state.runQuotaByClientId.set(detail.clientId, runQuota);
+            } catch (error) {
+              runQuota = {
+                admission: {
+                  allowed: false,
+                  reasons: ["run_quota_fetch_failed"],
+                  suggestion: error.message
+                }
+              };
+            }
+          }
+          target.innerHTML = renderEnvDetail(detail, runQuota);
+        } catch (error) {
+          target.innerHTML = `<div class="error">读取环境包详情失败：${escapeHTML(error.message)}</div>`;
+        }
+      }
+
+      async function loadClientDetail(clientId) {
+        const target = document.getElementById("client-detail-body");
+        if (state.selectedClientId === clientId) {
+          state.selectedClientId = "";
+          target.innerHTML = '<div class="empty">点击 Bound Clients 里的某个节点卡片后，这里会显示详情。</div>';
+          return;
+        }
+
+        state.selectedClientId = clientId;
+        target.innerHTML = `<div class="empty">正在读取 ${escapeHTML(clientId)} ...</div>`;
+        try {
+          const detail = await requestJSON(`/api/v1/edge-clients/${encodeURIComponent(clientId)}`);
+          target.innerHTML = renderObjectDetail(detail, [
+            "clientId",
+            "accountId",
+            "name",
+            "clientIp",
+            "baseUrl",
+            "dockerApiUrl",
+            "os",
+            "arch",
+            "cpuCores",
+            "memoryTotalMb",
+            "dockerVersion",
+            "healthStatus",
+            "discoveryStatus",
+            "pushStatus",
+            "targetSlotCount",
+            "actualSlotCount",
+            "availableSlotCount",
+            "runningSlotCount",
+            "slotExceptionStatus",
+            "slotExceptionReason",
+            "lastSlotCheckedAt",
+            "lastHeartbeatAt",
+            "lastCheckedAt",
+            "lastError"
+          ]);
+        } catch (error) {
+          target.innerHTML = `<div class="error">读取节点详情失败：${escapeHTML(error.message)}</div>`;
+        }
+      }
+
+      function toggleSlotDetail(clientId, slotId) {
+        const target = document.getElementById("slot-detail-body");
+        const key = `${clientId}/${slotId}`;
+        if (state.selectedSlotKey === key) {
+          state.selectedSlotKey = "";
+          target.innerHTML = '<div class="empty">点击 Slots 里的某个 slot 卡片后，这里会显示详情。</div>';
+          return;
+        }
+
+        state.selectedSlotKey = key;
+        const detail = state.slots.find((slot) => slot.clientId === clientId && slot.slotId === slotId);
+        if (!detail) {
+          target.innerHTML = `<div class="error">Node 当前缓存里没有找到 ${escapeHTML(key)}</div>`;
+          return;
+        }
+        target.innerHTML = renderObjectDetail(detail, [
+          "clientId",
+          "slotId",
+          "status",
+          "currentEnvId",
+          "currentRunId",
+          "containerId",
+          "containerName",
+          "cdpPort",
+          "vncPort",
+          "clientBaseUrl",
+          "lastError",
+          "lastSyncedAt",
+          "createdAt",
+          "updatedAt"
+        ]);
+      }
+
+      async function loadTaskDetail(taskId) {
+        const target = document.getElementById("task-detail-body");
+        if (state.selectedTaskId === taskId) {
+          state.selectedTaskId = "";
+          target.innerHTML = '<div class="empty">点击 Server Tasks 里的某个任务卡片后，这里会显示详情。</div>';
+          return;
+        }
+
+        state.selectedTaskId = taskId;
+        target.innerHTML = `<div class="empty">正在读取 ${escapeHTML(taskId)} ...</div>`;
+        try {
+          const detail = await requestJSON(`/api/v1/server-tasks/${encodeURIComponent(taskId)}`);
+          target.innerHTML = renderObjectDetail(detail, [
+            "taskId",
+            "taskType",
+            "resourceType",
+            "resourceId",
+            "status",
+            "currentStage",
+            "message",
+            "eventsUrl",
+            "error",
+            "suggestion",
+            "createdAt",
+            "updatedAt",
+            "finishedAt"
+          ]);
+        } catch (error) {
+          target.innerHTML = `<div class="error">读取任务详情失败：${escapeHTML(error.message)}</div>`;
+        }
+      }
+
+      function renderTaskAcceptedDetail(task, message) {
+        return `
+          ${renderObjectDetail(task, ["taskId", "taskType", "resourceType", "resourceId", "eventsUrl"])}
+          <pre class="json-block" id="task-event-log">${escapeHTML(message)}</pre>
+        `;
+      }
+
+      function startTaskEventStream(task, afterTerminal) {
+        if (!task?.eventsUrl || !window.EventSource) return;
+        if (state.activeTaskEventSource) {
+          state.activeTaskEventSource.close();
+          state.activeTaskEventSource = null;
+        }
+        const source = new EventSource(task.eventsUrl);
+        state.activeTaskEventSource = source;
+        const append = (eventName, event) => {
+          const target = document.getElementById("task-event-log");
+          if (!target) return;
+          target.textContent += `\n\n[${eventName}]\n${event.data}`;
+          target.scrollTop = target.scrollHeight;
+          if (eventName === "task.completed" || eventName === "task.failed") {
+            source.close();
+            state.activeTaskEventSource = null;
+            Promise.resolve()
+              .then(() => afterTerminal && afterTerminal(eventName, event))
+              .finally(() => setTimeout(refresh, 900));
+          }
+        };
+        source.addEventListener("task.progress", (event) => append("task.progress", event));
+        source.addEventListener("task.completed", (event) => append("task.completed", event));
+        source.addEventListener("task.failed", (event) => append("task.failed", event));
+        source.onerror = () => {
+          const target = document.getElementById("task-event-log");
+          if (target) {
+            target.textContent += "\n\n[SSE]\n连接中断，可在 Server Tasks 中点击任务查看最终详情。";
+          }
+          source.close();
+          state.activeTaskEventSource = null;
+        };
+      }
+
+      function renderEnvDetail(detail, runQuota) {
+        const runGate = resolveRunGate(detail, runQuota);
+        const actions = detail.envId
+          ? `<div class="item-actions">
+              ${renderRunSlotSelect(detail, runGate)}
+              ${actionButtonWithAttrs("加载到 Slot", {
+                "data-action": "run-env",
+                "data-env-id": detail.envId,
+                "data-client-id": detail.clientId || "",
+                "data-env-status": detail.status || "",
+                "data-admission-allowed": String(runGate.admissionAllowed),
+                disabled: runGate.canRun ? null : "disabled"
+              })}
+              ${actionButtonWithAttrs("卸载配置并恢复 Slot 默认态", {
+                "data-action": "stop-env",
+                "data-env-id": detail.envId,
+                "data-client-id": detail.clientId || "",
+                disabled: detail.status === "running" ? null : "disabled"
+              })}
+              ${actionButtonWithAttrs("备份 Browser Env", {
+                "data-action": "backup-env",
+                "data-env-id": detail.envId
+              })}
+              ${actionButtonWithAttrs("删除运行镜像", {
+                "data-action": "delete-env-image",
+                "data-env-id": detail.envId
+              })}
+              ${actionButtonWithAttrs("删除环境包资产", {
+                "data-action": "delete-env-package",
+                "data-env-id": detail.envId
+              })}
+            </div>`
+          : "";
+        return renderRunGateNotice(runGate) + actions + renderObjectDetail(detail, [
+          "envId",
+          "name",
+          "accountId",
+          "clientId",
+          "userId",
+          "rpaType",
+          "status",
+          "runtimeStatus",
+          "containerStatus",
+          "currentSlotId",
+          "cdpUrl",
+          "webVncUrl",
+          "lastTaskId",
+          "lastError",
+          "lastSyncedAt",
+          "createdAt",
+          "updatedAt",
+          "deletedAt"
+        ]);
+      }
+
+      function resolveRunGate(detail, runQuota) {
+        const client = state.clients.find((item) => item.clientId === detail.clientId);
+        const admission = runQuota?.admission || {};
+        const waitingSlots = state.slots.filter((slot) => {
+          return slot.clientId === detail.clientId && slot.status === "waiting";
+        });
+        const reasons = [];
+        if (!detail.clientId) {
+          reasons.push("环境包没有 clientId，Node 无法确定目标 Client。");
+        }
+        if (!["created", "stopped"].includes(detail.status || "")) {
+          reasons.push(`当前环境包状态是 ${detail.status || "-"}，只有 created/stopped 才能加载；backed_up 需要先 restore，running 需要先 stop。`);
+        }
+        if (!client) {
+          reasons.push("Node 当前节点列表里找不到该 clientId，请先刷新页面或检查绑定关系。");
+        } else {
+          if (client.healthStatus !== "healthy" || client.discoveryStatus !== "verified") {
+            reasons.push(`节点状态是 ${client.healthStatus || "-"}/${client.discoveryStatus || "-"}，必须 healthy/verified 才允许 run。`);
+          }
+          if ((client.slotExceptionStatus || "normal") !== "normal") {
+            reasons.push(`Slot 数量异常：${client.slotExceptionReason || client.slotExceptionStatus}。需要先修正 targetSlotCount 与 actualSlotCount，再执行 slot-reconcile。`);
+          }
+        }
+        if (!waitingSlots.length) {
+          reasons.push("Node 当前 slot 缓存里没有 waiting slot；如果 Client 已变化，请先点“刷新 Slot 缓存”。");
+        }
+        if (admission.allowed === false) {
+          const admissionReasons = Array.isArray(admission.reasons) ? admission.reasons.join(", ") : "";
+          reasons.push(`Run admission 拦截：${admissionReasons || "blocked"}；建议：${admission.suggestion || "-"}`);
+        }
+        return {
+          client,
+          admission,
+          admissionAllowed: admission.allowed !== false,
+          waitingSlots,
+          canRun: reasons.length === 0,
+          reasons
+        };
+      }
+
+      function renderRunGateNotice(runGate) {
+        if (runGate.canRun) {
+          return '<div class="detail-alert good">加载检查通过：环境包状态、节点状态、slot 缓存和 run admission 当前都允许加载到 waiting slot。</div>';
+        }
+        return `
+          <div class="detail-alert bad">
+            当前不能加载到 Slot：<br />
+            ${runGate.reasons.map((reason) => `• ${escapeHTML(reason)}`).join("<br />")}
+          </div>
+        `;
+      }
+
+      function renderRunSlotSelect(detail, runGate) {
+        const candidates = runGate.waitingSlots;
+        if (!candidates.length) {
+          return '<select id="env-run-slot-select" disabled><option value="">无 waiting slot</option></select>';
+        }
+        return `<select id="env-run-slot-select" aria-label="选择加载目标 slot">
+          ${candidates.map((slot) => `
+            <option value="${escapeHTML(slot.slotId)}">${escapeHTML(slot.slotId)} · ${escapeHTML(slot.status || "-")}</option>
+          `).join("")}
+        </select>`;
+      }
+
+      function renderObjectDetail(detail, keys) {
+        const fields = keys.map((key) => [key, formatDetailValue(key, detail?.[key])]);
+        return `
+          <div class="detail-grid">
+            ${fields.map(([key, value]) => `
+              <div class="detail-cell">
+                <div class="detail-key">${escapeHTML(key)}</div>
+                <div class="detail-value">${escapeHTML(value || "-")}</div>
+              </div>
+            `).join("")}
+          </div>
+          <pre class="json-block">${escapeHTML(JSON.stringify(detail, null, 2))}</pre>
+        `;
+      }
+
+      function formatDetailValue(key, value) {
+        if (value === undefined || value === null || value === "") return "-";
+        if (key.endsWith("At") && typeof value === "number") return formatUnix(value);
+        return value;
+      }
+
+      function formatUnix(value) {
+        if (!value) return "-";
+        const date = new Date(Number(value) * 1000);
+        if (Number.isNaN(date.getTime())) return String(value);
+        return date.toLocaleString();
+      }
+
+      function escapeHTML(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+    </script>
+  </body>
+</html>

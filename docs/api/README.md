@@ -18,6 +18,8 @@
 | 节点接入 | `POST /api/v1/edge-clients/{clientId}/recheck` | 已实现并已回归 |
 | 节点接入 | `POST /api/v1/edge-clients/{clientId}/confirm-address-update` | 已实现并已回归 |
 | 节点治理 | `GET /api/v1/edge-clients/{clientId}/slots` | 已实现并已回归 |
+| 节点治理 | `POST /api/v1/edge-clients/{clientId}/slots` | 已实现，待完整回归 |
+| 节点治理 | `DELETE /api/v1/edge-clients/{clientId}/slots/{slotId}` | 已实现，待完整回归 |
 | 节点治理 | `POST /api/v1/edge-clients/{clientId}/target-slot-count` | 已实现并已回归 |
 | 节点治理 | `POST /api/v1/edge-clients/{clientId}/slot-reconcile` | 已实现并已回归 |
 | 节点治理 | `GET /api/v1/edge-clients/{clientId}/run-quota` | 已实现并已回归 |
@@ -61,6 +63,8 @@
 
 - [server-slot-governance-apis.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-slot-governance-apis.md)
   - `GET /api/v1/edge-clients/{clientId}/slots`
+  - `POST /api/v1/edge-clients/{clientId}/slots`
+  - `DELETE /api/v1/edge-clients/{clientId}/slots/{slotId}`
   - `POST /api/v1/edge-clients/{clientId}/target-slot-count`
 - [server-slot-reconcile-regression.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/api/server-slot-reconcile-regression.md)
   - `POST /api/v1/edge-clients/{clientId}/slot-reconcile`
@@ -138,8 +142,12 @@
   - Swagger / OpenAPI 正式协议入口
 - [scalar.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/scalar.md)
   - Node Server 内置 Scalar API Reference 页面说明
+- `GET /admin`
+  - Node Server 当前阶段内置只读管理 Demo，用于观察节点、环境包和任务事实；正式 Vue 管理台上线后删除，不作为长期前端工程
 - [server-v1-api-plan.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-api-plan.md)
   - V1 API 分阶段实现路线
+- [server-v1-current-status.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-current-status.md)
+  - 当前 V1 能力、暂停项、不做项和下一阶段候选任务封板
 - [server-v1-central-node-technical-design.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-central-node-technical-design.md)
   - 中心节点技术设计
 - [server-v1-database-design.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-database-design.md)

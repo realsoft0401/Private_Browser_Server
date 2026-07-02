@@ -20,7 +20,7 @@ import (
 //
 // 当前这份路由表已经收口为 5 类正式入口：
 // - 基础入口：`/`、`/health`
-// - 文档入口：`/swagger`、`/scalar`、`/openapi.yaml`
+// - 文档与内置 Demo：`/swagger`、`/scalar`、`/admin`、`/openapi.yaml`
 // - 节点治理：heartbeat、discovered、bind、recheck、confirm-address-update、slot、quota
 // - browser-env 生命周期：query、refresh、run、stop、backup、restore、package、del
 // - 中心任务观察：`/api/v1/server-tasks/*`
@@ -56,6 +56,8 @@ func Setup() *gin.Engine {
 	})
 	r.GET("/scalar", scalarPage)
 	r.GET("/scalar/", scalarPage)
+	r.GET("/admin", adminPage)
+	r.GET("/admin/", adminPage)
 
 	apiV1 := r.Group("/api/v1")
 	edgeClients := apiV1.Group("/edge-clients")
@@ -68,6 +70,8 @@ func Setup() *gin.Engine {
 	edgeClients.POST("/:clientId/push-client-id", BindService.PushClientID)
 	edgeClients.POST("/:clientId/slot-reconcile", NodeService.SlotReconcile)
 	edgeClients.POST("/:clientId/target-slot-count", NodeService.SetTargetSlotCount)
+	edgeClients.POST("/:clientId/slots", NodeService.CreateClientSlot)
+	edgeClients.DELETE("/:clientId/slots/:slotId", NodeService.DeleteClientSlot)
 	edgeClients.GET("/:clientId/run-quota", NodeService.GetRunQuota)
 	edgeClients.POST("/:clientId/run-quota/refresh", NodeService.RefreshRunQuota)
 	edgeClients.GET("", NodeService.ListBoundClients)
@@ -108,4 +112,20 @@ func Setup() *gin.Engine {
 // - 不复制第二份 OpenAPI，不引入独立 Dockerfile，不改变任何业务 API 状态机。
 func scalarPage(c *gin.Context) {
 	c.File(filepath.Join(Settings.Conf.ProjectRoot, "public", "scalar.html"))
+}
+
+// adminPage 返回 Node Server 内置管理 Demo 页面。
+//
+// 设计来源：
+// - 当前阶段需要先把节点、环境包和任务的管理视图跑起来，方便多机器部署时观察事实；
+// - 但正式 Vue 管理台还没进入，因此这里采用单文件静态页，不引入前端构建链路；
+// - 页面只能调用 Node Server 正式 API，不能绕过中心直接调用 Client；
+// - 允许少量受控运维动作，例如 slot 新增/删除、browser-env 创建/备份/加载/卸载；
+// - 这些动作必须复用后端状态机和前置条件，页面本身不新增第二套业务规则。
+//
+// 退场边界：
+// - 后续正式 Vue 管理台上线后，删除 `/admin` 路由和 `public/admin.html` 即可；
+// - 不应让这个 Demo 演化成第二套长期前端工程。
+func adminPage(c *gin.Context) {
+	c.File(filepath.Join(Settings.Conf.ProjectRoot, "public", "admin.html"))
 }

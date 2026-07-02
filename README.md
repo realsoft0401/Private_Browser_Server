@@ -28,14 +28,16 @@ Node 找到 Client
 - [server-v1-central-node-technical-design.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-central-node-technical-design.md)
 - [server-v1-database-design.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-database-design.md)
 - [server-v1-api-plan.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-api-plan.md)
+- [server-v1-current-status.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/server-v1-current-status.md)
 - [openapi.yaml](/Users/lining/Documents/Browser_virtualization/Private_Browser_Server/docs/openapi.yaml)
 
 ## API 文档入口
 
-Node Server 当前内置两类 API 文档页面，全部挂在 3400 主服务内：
+Node Server 当前内置 API 文档页面和一个临时只读管理 Demo，全部挂在 3400 主服务内：
 
 - `/swagger`
 - `/scalar`
+- `/admin`
 - `/openapi.yaml`
 
 访问示例：
@@ -43,10 +45,13 @@ Node Server 当前内置两类 API 文档页面，全部挂在 3400 主服务内
 ```text
 http://127.0.0.1:3400/swagger
 http://127.0.0.1:3400/scalar
+http://127.0.0.1:3400/admin
 http://127.0.0.1:3400/openapi.yaml
 ```
 
 其中 `/scalar` 是唯一 Scalar 正式入口，不维护独立 Scalar 展示服务，也不新增单独 Dockerfile。
+
+`/admin` 是当前阶段的只读 Node Admin Demo，只用于观察 discovered clients、bound clients、browser envs 和 server tasks，不提供 bind、unbind、run、delete 等高危动作。后续正式 Vue 管理台上线后，应删除 `/admin` 路由、`public/admin.html` 和对应测试引用，不把它扩展成第二套前端工程。
 
 ## 镜像构建
 
@@ -88,4 +93,5 @@ docker run -d \
 curl -s http://127.0.0.1:3400/health | jq
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3400/swagger
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3400/scalar
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3400/admin
 ```

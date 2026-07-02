@@ -10,6 +10,7 @@ import (
 
 	NodeDAO "private_browser_server/Dao/Node"
 	TaskDAO "private_browser_server/Dao/Task"
+	NodeModel "private_browser_server/Models/Node"
 	TaskModel "private_browser_server/Models/Task"
 	"private_browser_server/Pkg/HttpResponse"
 	NodeRepo "private_browser_server/Repository/Node"
@@ -93,13 +94,37 @@ func runSlotReconcile(taskID, clientID, baseURL string, targetSlotCount int64, s
 	publisher := TaskService.GetService()
 	_ = publisher.PublishProgress(ctx, taskID, newSlotReconcileEvent(TaskModel.EventProgress, taskID, clientID, "", "load_client", TaskModel.StatusPending, "task accepted", "", ""))
 
-	slots, err := EdgeClientService.New().ListSlots(ctx, baseURL)
+	summary, err := refreshSlotCacheFromClient(ctx, clientID, baseURL, targetSlotCount)
 	if err != nil {
-		_ = publisher.PublishFailed(ctx, taskID, newSlotReconcileEvent(TaskModel.EventFailed, taskID, clientID, "", "fetch_slots_failed", TaskModel.StatusFailed, "slot reconcile failed", err.Error(), "check client /api/v1/edge/slots availability"))
+		_ = publisher.PublishFailed(ctx, taskID, newSlotReconcileEvent(TaskModel.EventFailed, taskID, clientID, "", "refresh_slots_failed", TaskModel.StatusFailed, "slot reconcile failed", err.Error(), "check client /api/v1/edge/slots availability and node sqlite write path"))
 		return
 	}
 	_ = publisher.PublishProgress(ctx, taskID, newSlotReconcileEvent(TaskModel.EventProgress, taskID, clientID, "", "fetch_slots", TaskModel.StatusRunning, "client slots loaded", "", ""))
+	_ = publisher.PublishProgress(ctx, taskID, newSlotReconcileEvent(TaskModel.EventProgress, taskID, clientID, "", "replace_slots", TaskModel.StatusRunning, "node slot cache refreshed", "", ""))
 
+	_ = NodeRepo.NewRepository().CreateSlotLog(ctx, &NodeDAO.SlotLogRow{
+		ClientID:  clientID,
+		SlotID:    "",
+		Action:    "slot_reconcile",
+		Result:    "success",
+		Message:   firstNonEmpty(source, "slot reconcile success"),
+		CreatedAt: summary.UpdatedAt,
+	})
+
+	_ = publisher.PublishCompleted(ctx, taskID, newSlotReconcileEvent(TaskModel.EventCompleted, taskID, clientID, "", "finalize_success", TaskModel.StatusSuccess, "slot reconcile completed", "", ""))
+}
+
+// refreshSlotCacheFromClient 统一执行“从 Client 拉 slot -> 重建中心缓存 -> 更新节点摘要”。
+//
+// 设计来源：
+// - slot-reconcile、管理员新增 slot、管理员删除 slot 都需要完全相同的缓存刷新口径；
+// - 之前如果每个入口各自统计 waiting/running，很容易出现 run admission 与页面展示不一致；
+// - targetSlotCount 传入值代表本次中心治理目标，调用方可以传动作后的实际数量以表达“管理员正在调整容量”。
+func refreshSlotCacheFromClient(ctx context.Context, clientID, baseURL string, targetSlotCount int64) (*NodeModel.ClientSlotMutationResponse, error) {
+	slots, err := EdgeClientService.New().ListSlots(ctx, baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("fetch client slots failed: %w", err)
+	}
 	now := time.Now().Unix()
 	rows := make([]NodeDAO.SlotRow, 0, len(slots))
 	availableCount := int64(0)
@@ -131,14 +156,15 @@ func runSlotReconcile(taskID, clientID, baseURL string, targetSlotCount int64, s
 
 	repo := NodeRepo.NewRepository()
 	if err = repo.ReplaceSlots(ctx, clientID, rows); err != nil {
-		_ = publisher.PublishFailed(ctx, taskID, newSlotReconcileEvent(TaskModel.EventFailed, taskID, clientID, "", "replace_slots_failed", TaskModel.StatusFailed, "slot reconcile failed", err.Error(), "check node sqlite write path"))
-		return
+		return nil, fmt.Errorf("replace node slot cache failed: %w", err)
 	}
-	_ = publisher.PublishProgress(ctx, taskID, newSlotReconcileEvent(TaskModel.EventProgress, taskID, clientID, "", "replace_slots", TaskModel.StatusRunning, "node slot cache refreshed", "", ""))
 
 	slotExceptionStatus := "normal"
 	slotExceptionReason := ""
 	actualSlotCount := int64(len(rows))
+	if targetSlotCount < 0 {
+		targetSlotCount = actualSlotCount
+	}
 	if targetSlotCount > 0 && targetSlotCount != actualSlotCount {
 		slotExceptionStatus = "exception"
 		slotExceptionReason = fmt.Sprintf("target_slot_count=%d actual_slot_count=%d", targetSlotCount, actualSlotCount)
@@ -154,20 +180,19 @@ func runSlotReconcile(taskID, clientID, baseURL string, targetSlotCount int64, s
 		LastSlotCheckedAt:   now,
 		UpdatedAt:           now,
 	}); err != nil {
-		_ = publisher.PublishFailed(ctx, taskID, newSlotReconcileEvent(TaskModel.EventFailed, taskID, clientID, "", "update_summary_failed", TaskModel.StatusFailed, "slot reconcile failed", err.Error(), "check edge_clients summary fields"))
-		return
+		return nil, fmt.Errorf("update node slot summary failed: %w", err)
 	}
-
-	_ = repo.CreateSlotLog(ctx, &NodeDAO.SlotLogRow{
-		ClientID:  clientID,
-		SlotID:    "",
-		Action:    "slot_reconcile",
-		Result:    "success",
-		Message:   firstNonEmpty(source, "slot reconcile success"),
-		CreatedAt: now,
-	})
-
-	_ = publisher.PublishCompleted(ctx, taskID, newSlotReconcileEvent(TaskModel.EventCompleted, taskID, clientID, "", "finalize_success", TaskModel.StatusSuccess, "slot reconcile completed", "", ""))
+	return &NodeModel.ClientSlotMutationResponse{
+		ClientID:            clientID,
+		Result:              "success",
+		TargetSlotCount:     targetSlotCount,
+		ActualSlotCount:     actualSlotCount,
+		AvailableSlotCount:  availableCount,
+		RunningSlotCount:    runningCount,
+		SlotExceptionStatus: slotExceptionStatus,
+		SlotExceptionReason: slotExceptionReason,
+		UpdatedAt:           now,
+	}, nil
 }
 
 // newSlotReconcileEvent 统一构造 slot-reconcile 的 SSE 事件。

@@ -23,6 +23,46 @@ type SetTargetSlotCountResponse struct {
 	UpdatedAt           int64  `json:"updatedAt"`
 }
 
+// CreateClientSlotRequest 描述一次由 Node 管理端发起的 slot 新增请求。
+//
+// 设计来源：
+// - Client 只接受明确 slotId，不自动生成编号；
+// - Node Admin Demo 当前作为内网治理入口，也必须显式遵守 `slot001` 这类三位编号规则；
+// - source 只用于留痕，不参与 Client 资源事实。
+type CreateClientSlotRequest struct {
+	SlotID string `json:"slotId"`
+	Source string `json:"source"`
+}
+
+// DeleteClientSlotRequest 描述一次由 Node 管理端发起的 slot 删除请求。
+//
+// 当前页面默认只发 `force=false`，避免管理员误删 running slot；
+// force 字段保留给后续受控强制清理能力，不能被普通流程默认打开。
+type DeleteClientSlotRequest struct {
+	Force  bool   `json:"force"`
+	Source string `json:"source"`
+}
+
+// ClientSlotMutationResponse 是新增/删除 slot 后的中心收口摘要。
+//
+// 职责边界：
+// - action/result 表示本次资源治理动作是否完成；
+// - slot 摘要来自动作后的 Client 全量 slots 对账；
+// - targetSlotCount 会同步成动作后的实际 slot 数，表示本次管理员操作是在调整目标容量。
+type ClientSlotMutationResponse struct {
+	ClientID            string `json:"clientId"`
+	SlotID              string `json:"slotId"`
+	Action              string `json:"action"`
+	Result              string `json:"result"`
+	TargetSlotCount     int64  `json:"targetSlotCount"`
+	ActualSlotCount     int64  `json:"actualSlotCount"`
+	AvailableSlotCount  int64  `json:"availableSlotCount"`
+	RunningSlotCount    int64  `json:"runningSlotCount"`
+	SlotExceptionStatus string `json:"slotExceptionStatus"`
+	SlotExceptionReason string `json:"slotExceptionReason"`
+	UpdatedAt           int64  `json:"updatedAt"`
+}
+
 // EdgeClientSlotListResponse 是中心节点 slot 明细查询结果。
 //
 // 职责边界：

@@ -744,6 +744,68 @@ paths:
                     code: 1004
                     message: edge client not found
   /api/v1/edge-clients/{clientId}/slots:
+    post:
+      tags: [Nodes]
+      summary: Create slot on edge client
+      description: |
+        通过 Node Server 在目标 Client 上新增一个真实 slot。
+
+        业务语义：
+        - Node 调用 Client `POST /api/v1/edge/slots`
+        - 成功后 Node 立即重新拉取 Client slots
+        - Node 会把 `targetSlotCount` 同步为动作后的真实 `actualSlotCount`
+
+        它不负责：
+        - 批量扩容
+        - 自动选择 slotId
+        - 创建 Browser Env 或触发 run
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 创建单个 slot 是短链路同步动作，成功返回时表示 Client 已创建且 Node 缓存已刷新
+      parameters:
+        - $ref: '#/components/parameters/ClientID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateClientSlotRequest'
+            examples:
+              default:
+                value:
+                  slotId: slot004
+                  source: admin-demo-create-slot
+      responses:
+        '200':
+          description: Slot created and node cache refreshed
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseClientSlotMutation'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190003'
+                      slotId: slot004
+                      action: create_slot
+                      result: success
+                      targetSlotCount: 4
+                      actualSlotCount: 4
+                      availableSlotCount: 4
+                      runningSlotCount: 0
+                      slotExceptionStatus: normal
+                      slotExceptionReason: ''
+                      updatedAt: 1782959000
+                invalid_slot:
+                  value:
+                    code: 1002
+                    message: slotId 必须使用 slot001 这类三位编号
     get:
       tags: [Nodes]
       summary: List cached slots for edge client
@@ -808,6 +870,77 @@ paths:
                   value:
                     code: 1004
                     message: edge client not found
+  /api/v1/edge-clients/{clientId}/slots/{slotId}:
+    delete:
+      tags: [Nodes]
+      summary: Delete slot on edge client
+      description: |
+        通过 Node Server 删除目标 Client 上的一个真实 slot。
+
+        业务语义：
+        - Node 调用 Client `DELETE /api/v1/edge/slots/{slotId}`
+        - 默认 `force=false`，只有 waiting slot 可以删除
+        - 成功后 Node 立即重新拉取 Client slots
+        - Node 会把 `targetSlotCount` 同步为动作后的真实 `actualSlotCount`
+
+        它不负责：
+        - 删除 running slot 的业务环境包
+        - 自动 stop Browser Env
+        - 批量缩容
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 删除单个 waiting slot 是短链路同步动作，成功返回时表示 Client 已删除且 Node 缓存已刷新
+      parameters:
+        - $ref: '#/components/parameters/ClientID'
+        - name: slotId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^slot[0-9]{3}$'
+          example: slot004
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteClientSlotRequest'
+            examples:
+              default:
+                value:
+                  force: false
+                  source: admin-demo-delete-slot
+      responses:
+        '200':
+          description: Slot deleted and node cache refreshed
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseClientSlotMutation'
+                  - $ref: '#/components/schemas/ApiErrorResponse'
+              examples:
+                success:
+                  value:
+                    code: 1000
+                    message: success
+                    data:
+                      clientId: '9060901190003'
+                      slotId: slot004
+                      action: delete_slot
+                      result: success
+                      targetSlotCount: 3
+                      actualSlotCount: 3
+                      availableSlotCount: 3
+                      runningSlotCount: 0
+                      slotExceptionStatus: normal
+                      slotExceptionReason: ''
+                      updatedAt: 1782959300
+                not_waiting:
+                  value:
+                    code: 1005
+                    message: 'delete client slot failed: slot 当前不是 waiting，不能直接销毁'
   /api/v1/edge-clients/{clientId}/run-quota:
     get:
       tags: [Nodes]
@@ -2099,6 +2232,13 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/EdgeClientSlotListResponse'
+    ApiResponseClientSlotMutation:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ClientSlotMutationResponse'
     ApiResponseRunQuota:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
@@ -2460,6 +2600,30 @@ components:
           type: string
           description: 本次目标 slot 数更新来源说明
           example: manual-admin
+    CreateClientSlotRequest:
+      type: object
+      required: [slotId]
+      properties:
+        slotId:
+          type: string
+          pattern: '^slot[0-9]{3}$'
+          description: 要在目标 Client 上创建的 slotId，必须是 slot001 这类三位编号
+          example: slot004
+        source:
+          type: string
+          description: 本次新增来源说明，只用于中心留痕
+          example: admin-demo-create-slot
+    DeleteClientSlotRequest:
+      type: object
+      properties:
+        force:
+          type: boolean
+          description: 是否强制删除；当前页面默认 false，只删除 waiting slot
+          example: false
+        source:
+          type: string
+          description: 本次删除来源说明，只用于中心留痕
+          example: admin-demo-delete-slot
     RefreshRunQuotaRequest:
       type: object
       properties:
@@ -2997,6 +3161,48 @@ components:
         total:
           type: integer
           example: 1
+    ClientSlotMutationResponse:
+      type: object
+      properties:
+        clientId:
+          type: string
+          example: '9060901190003'
+        slotId:
+          type: string
+          example: slot004
+        action:
+          type: string
+          enum: [create_slot, delete_slot]
+          example: create_slot
+        result:
+          type: string
+          example: success
+        targetSlotCount:
+          type: integer
+          format: int64
+          example: 4
+        actualSlotCount:
+          type: integer
+          format: int64
+          example: 4
+        availableSlotCount:
+          type: integer
+          format: int64
+          example: 4
+        runningSlotCount:
+          type: integer
+          format: int64
+          example: 0
+        slotExceptionStatus:
+          type: string
+          example: normal
+        slotExceptionReason:
+          type: string
+          example: ''
+        updatedAt:
+          type: integer
+          format: int64
+          example: 1782959000
     RunAdmissionResult:
       type: object
       properties:
